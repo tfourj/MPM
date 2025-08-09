@@ -180,6 +180,13 @@ MainWindow::MainWindow(QWidget *parent)
     updateWindowsStartup(ui->checkBoxStartWithWindows->isChecked());
     onStartMinimizedIfConfigured();
 
+    // Set version label in footer
+#ifdef APP_VERSION
+    if (ui->labelVersion) {
+        ui->labelVersion->setText(QString("v%1").arg(QString::fromUtf8(APP_VERSION)));
+    }
+#endif
+
     if (m_settings.value("options/autoConnect", false).toBool()) {
         QTimer::singleShot(0, this, [this]() { onConnectClicked(); });
     }

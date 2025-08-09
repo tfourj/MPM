@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(MPM VERSION 0.1 LANGUAGES CXX)
+project(MPM VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -49,6 +49,9 @@ else()
 endif()
 
 target_link_libraries(MPM PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Mqtt)
+
+# Expose version to the application
+target_compile_definitions(MPM PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
 # Let AUTOUIC find .ui files that live outside the source file's directory
 set_property(TARGET MPM PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DIR}/src/ui")
