@@ -353,6 +353,11 @@ QString MainWindow::getSubscribeTopic() const
 void MainWindow::onMessageReceived(const QByteArray &message, const QMqttTopicName &topic)
 {
     QString msg = QString::fromUtf8(message);
+    
+    if (topic.name().endsWith("/health")) {
+        return;
+    }
+
     log("Received message: " + msg + " on topic: " + topic.name());
 
     if (ui->checkBoxPrintOnly->isChecked()) {
