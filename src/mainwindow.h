@@ -51,7 +51,11 @@ private:
 
     // MQTT
     QString getSubscribeTopic() const; // mqttpowermanager/%1/+
+    QString getAvailabilityTopic() const; // mqttpowermanager/%1/health
     void log(const QString &msg);
+    void updateAvailabilityWill();
+    void publishAvailabilityOnline();
+    void publishAvailabilityOffline();
 
     void loadSettings();
     void saveSettingsIfNeeded();

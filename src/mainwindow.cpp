@@ -18,6 +18,7 @@
 #include <QMenu>
 #include <QClipboard>
 #include <QApplication>
+#include <QtGlobal>
 #include "actions/actiondialog.h"
 #ifdef Q_OS_WIN
 #include <QSettings>
@@ -183,6 +184,11 @@ MainWindow::MainWindow(QWidget *parent)
         QTimer::singleShot(0, this, [this]() { onConnectClicked(); });
     }
 
+    // Ensure we publish offline on app exit (graceful)
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() {
+        publishAvailabilityOffline();
+    });
+
     // Wire save settings button
     connect(ui->pushButtonSaveSettings, &QPushButton::clicked, this, &MainWindow::onSaveSettingsClicked);
 
@@ -205,10 +211,14 @@ void MainWindow::onConnectClicked()
         if (timeoutSec > 0) {
             m_connectTimeoutTimer.start(timeoutSec * 1000);
         }
+        // Ensure LWT is configured just before connecting
+        updateAvailabilityWill();
         m_client->connectToHost();
     } else {
         log("Disconnecting...");
         m_connectTimeoutTimer.stop();
+        // Gracefully publish offline retained before disconnect
+        publishAvailabilityOffline();
         m_client->disconnectFromHost();
     }
 }
@@ -230,6 +240,9 @@ void MainWindow::onConnected()
     } else {
         log("Username/custom ID is empty!");
     }
+
+    // Publish availability online retained so HA sees us immediately
+    publishAvailabilityOnline();
 }
 
 void MainWindow::onStateChanged(QMqttClient::ClientState state)
@@ -463,6 +476,41 @@ void MainWindow::applyUiToClient()
     // MQTT auth
     m_client->setUsername(ui->lineEditMqttUsername->text());
     m_client->setPassword(ui->lineEditMqttPassword->text());
+}
+
+QString MainWindow::getAvailabilityTopic() const
+{
+    const QString username = ui->lineEditUsername->text().trimmed();
+    if (username.isEmpty()) return QString();
+    return QString("mqttpowermanager/%1/health").arg(username);
+}
+
+void MainWindow::updateAvailabilityWill()
+{
+    const QString topic = getAvailabilityTopic();
+    if (topic.isEmpty()) return;
+
+    m_client->setWillTopic(topic);
+    m_client->setWillMessage(QByteArrayLiteral("offline"));
+    m_client->setWillQoS(0);
+    m_client->setWillRetain(true);
+}
+
+void MainWindow::publishAvailabilityOnline()
+{
+    const QString topic = getAvailabilityTopic();
+    if (topic.isEmpty()) return;
+    m_client->publish(topic, QByteArrayLiteral("online"), 0, true);
+}
+
+void MainWindow::publishAvailabilityOffline()
+{
+    const QString topic = getAvailabilityTopic();
+    if (topic.isEmpty()) return;
+    // Try to publish retained offline if connected
+    if (m_client->state() == QMqttClient::Connected) {
+        m_client->publish(topic, QByteArrayLiteral("offline"), 0, true);
+    }
 }
 
 // Actions persistence and UI
