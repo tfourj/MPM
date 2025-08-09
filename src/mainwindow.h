@@ -47,7 +47,9 @@ private:
     Ui::MainWindow *ui;
     QMqttClient *m_client = nullptr;
     QTimer m_connectTimeoutTimer;
+    QTimer m_reconnectTimer;
     QSettings m_settings;
+    bool m_userInitiatedDisconnect = false;
 
     // MQTT
     QString getSubscribeTopic() const; // mqttpowermanager/%1/+
@@ -62,6 +64,7 @@ private:
     void applyUiToClient();
     void updateConnectButton();
     void updateStatusLabel(QMqttClient::ClientState state, QMqttClient::ClientError error = QMqttClient::NoError);
+    void scheduleReconnectIfNeeded();
 
     // Actions persistence and UI
     struct UserActionCfg {

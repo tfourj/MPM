@@ -156,10 +156,21 @@ MainWindow::MainWindow(QWidget *parent)
     m_connectTimeoutTimer.setSingleShot(true);
     connect(&m_connectTimeoutTimer, &QTimer::timeout, this, &MainWindow::onConnectTimeout);
 
+    // Reconnect timer
+    m_reconnectTimer.setSingleShot(true);
+    connect(&m_reconnectTimer, &QTimer::timeout, this, [this]() {
+        if (ui->checkBoxAutoReconnect->isChecked()) {
+            log("Auto-reconnect: attempting to connect...");
+            onConnectClicked();
+        }
+    });
+
     loadSettings();
 
     connect(ui->checkBoxStartWithWindows, &QCheckBox::toggled, this, &MainWindow::onStartWithWindowsToggled);
     connect(ui->checkBoxAutoConnect, &QCheckBox::toggled, this, [this](bool){ saveSettingsIfNeeded(); });
+    connect(ui->checkBoxAutoReconnect, &QCheckBox::toggled, this, [this](bool){ saveSettingsIfNeeded(); });
+    connect(ui->spinBoxReconnectSec, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){ saveSettingsIfNeeded(); });
     connect(ui->checkBoxStartMinimized, &QCheckBox::toggled, this, [this](bool){ saveSettingsIfNeeded(); });
     // Startup path lock UI
     connect(ui->checkBoxLockStartupPath, &QCheckBox::toggled, this, &MainWindow::onStartupPathLockToggled);
@@ -213,7 +224,15 @@ void MainWindow::onConnectClicked()
     applyUiToClient();
 
     if (m_client->state() == QMqttClient::Disconnected) {
+        // If a reconnect is pending, clicking acts as cancel
+        if (m_reconnectTimer.isActive()) {
+            m_reconnectTimer.stop();
+            log("Auto-reconnect canceled.");
+            updateConnectButton();
+            return;
+        }
         log("Connecting...");
+        m_userInitiatedDisconnect = false;
         const int timeoutSec = ui->spinBoxTimeoutSec->value();
         if (timeoutSec > 0) {
             m_connectTimeoutTimer.start(timeoutSec * 1000);
@@ -221,12 +240,15 @@ void MainWindow::onConnectClicked()
         // Ensure LWT is configured just before connecting
         updateAvailabilityWill();
         m_client->connectToHost();
+        m_reconnectTimer.stop();
     } else {
         log("Disconnecting...");
         m_connectTimeoutTimer.stop();
         // Gracefully publish offline retained before disconnect
         publishAvailabilityOffline();
+        m_userInitiatedDisconnect = true;
         m_client->disconnectFromHost();
+        m_reconnectTimer.stop();
     }
 }
 
@@ -260,12 +282,16 @@ void MainWindow::onStateChanged(QMqttClient::ClientState state)
     switch (state) {
     case QMqttClient::Disconnected:
         log("MQTT state: Disconnected");
+        if (!m_userInitiatedDisconnect) {
+            scheduleReconnectIfNeeded();
+        }
         break;
     case QMqttClient::Connecting:
         log("MQTT state: Connecting");
         break;
     case QMqttClient::Connected:
         log("MQTT state: Connected");
+        m_reconnectTimer.stop();
         break;
     }
 }
@@ -302,6 +328,18 @@ void MainWindow::onSaveSettingsClicked()
     lines << QString("- Auto-connect: %1").arg(ui->checkBoxAutoConnect->isChecked() ? "true" : "false");
     lines << QString("- Start minimized: %1").arg(ui->checkBoxStartMinimized->isChecked() ? "true" : "false");
     log(lines.join('\n'));
+}
+
+void MainWindow::scheduleReconnectIfNeeded()
+{
+    if (!ui->checkBoxAutoReconnect->isChecked()) return;
+    if (m_client->state() != QMqttClient::Disconnected) return;
+    if (m_userInitiatedDisconnect) return;
+    if (m_reconnectTimer.isActive()) return;
+    const int delaySec = std::max(1, ui->spinBoxReconnectSec->value());
+    log(QString("Scheduling auto-reconnect in %1 s").arg(delaySec));
+    m_reconnectTimer.start(delaySec * 1000);
+    updateConnectButton();
 }
 
 QString MainWindow::getSubscribeTopic() const
@@ -422,6 +460,8 @@ void MainWindow::loadSettings()
     ui->spinBoxTimeoutSec->setValue(m_settings.value("options/timeoutSec", 5).toInt());
     ui->checkBoxStartWithWindows->setChecked(m_settings.value("options/startWithWindows", false).toBool());
     ui->checkBoxAutoConnect->setChecked(m_settings.value("options/autoConnect", false).toBool());
+    ui->checkBoxAutoReconnect->setChecked(m_settings.value("options/autoReconnect", false).toBool());
+    ui->spinBoxReconnectSec->setValue(m_settings.value("options/reconnectSec", 5).toInt());
     ui->checkBoxStartMinimized->setChecked(m_settings.value("options/startMinimized", false).toBool());
     // Startup path lock
     const bool lockPath = m_settings.value("options/startupPathLocked", false).toBool();
@@ -441,6 +481,8 @@ void MainWindow::saveSettingsIfNeeded()
     m_settings.setValue("options/printOnly", ui->checkBoxPrintOnly->isChecked());
     m_settings.setValue("options/timeoutSec", ui->spinBoxTimeoutSec->value());
     m_settings.setValue("options/autoConnect", ui->checkBoxAutoConnect->isChecked());
+    m_settings.setValue("options/autoReconnect", ui->checkBoxAutoReconnect->isChecked());
+    m_settings.setValue("options/reconnectSec", ui->spinBoxReconnectSec->value());
     m_settings.setValue("options/startWithWindows", ui->checkBoxStartWithWindows->isChecked());
     m_settings.setValue("options/startMinimized", ui->checkBoxStartMinimized->isChecked());
     m_settings.setValue("options/startupPathLocked", ui->checkBoxLockStartupPath->isChecked());
@@ -807,13 +849,21 @@ void MainWindow::updateConnectButton()
 {
     switch (m_client->state()) {
     case QMqttClient::Disconnected:
-        ui->pushButtonConnect->setText("Connect");
+        if (m_reconnectTimer.isActive()) {
+            ui->pushButtonConnect->setText("Connecting...");
+            ui->pushButtonConnect->setToolTip("Click to cancel auto-reconnect");
+        } else {
+            ui->pushButtonConnect->setText("Connect");
+            ui->pushButtonConnect->setToolTip("");
+        }
         break;
     case QMqttClient::Connecting:
         ui->pushButtonConnect->setText("Connecting...");
+        ui->pushButtonConnect->setToolTip("");
         break;
     case QMqttClient::Connected:
         ui->pushButtonConnect->setText("Disconnect");
+        ui->pushButtonConnect->setToolTip("");
         break;
     }
 }
