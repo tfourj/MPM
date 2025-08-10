@@ -48,6 +48,12 @@ else()
     endif()
 endif()
 
+set_target_properties(MPM PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
+)
+
 target_link_libraries(MPM PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Mqtt)
 
 # Expose version to the application
@@ -84,4 +90,31 @@ install(TARGETS MPM
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(MPM)
+endif()
+
+if(WIN32 AND NOT STATIC_BUILD)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        get_target_property(_qt_bin_dir Qt${QT_VERSION_MAJOR}::qmake IMPORTED_LOCATION)
+        get_filename_component(_qt_bin_dir "${_qt_bin_dir}" DIRECTORY)
+
+        set(_deploy_dir $<TARGET_FILE_DIR:MPM>)
+
+        add_custom_command(TARGET MPM POST_BUILD
+            COMMAND "${_qt_bin_dir}/windeployqt.exe"
+                --no-translations
+                --no-system-d3d-compiler
+                --no-opengl-sw
+                --no-quick-import
+                --no-virtualkeyboard
+                --no-3dcore
+                "$<TARGET_FILE:MPM>"
+            COMMENT "Deploying only core Qt DLLs with windeployqt..."
+        )
+
+        add_custom_command(TARGET MPM POST_BUILD
+            COMMAND cmd /C "cd /D \"${CMAKE_SOURCE_DIR}\" && echo Checking for user_post_deploy.bat in: %CD% && if exist \"user_post_deploy.bat\" call \"user_post_deploy.bat\" \"${_deploy_dir}\""
+            COMMENT "Running user_post_deploy.bat from project root if it exists..."
+        )
+
+    endif()
 endif()
