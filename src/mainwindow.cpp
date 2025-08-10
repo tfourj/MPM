@@ -804,8 +804,9 @@ void MainWindow::onCreateStartMenuShortcut()
         QMessageBox::warning(this, "Start Menu", "Cannot resolve Start Menu folder.");
         return;
     }
-    QDir().mkpath(appsDir);
-    const QString linkPath = QDir(appsDir).filePath("MPM.lnk");
+    const QString mpmDir = QDir(appsDir).filePath("MPM");
+    QDir().mkpath(mpmDir);
+    const QString linkPath = QDir(mpmDir).filePath("MPM.lnk");
 
     HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     const bool shouldUninit = SUCCEEDED(hr);
