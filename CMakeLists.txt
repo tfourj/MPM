@@ -64,7 +64,7 @@ set_property(TARGET MPM PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DI
 
 # Link Windows system libraries
 if (WIN32)
-    target_link_libraries(MPM PRIVATE Crypt32 Ole32 Shell32)
+    target_link_libraries(MPM PRIVATE Crypt32 Ole32 Shell32 PowrProf)
 endif()
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
