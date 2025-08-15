@@ -70,23 +70,6 @@ static bool executeWin(ActionType type, const QString &exePath)
 bool ActionsRegistry::execute(ActionType type, const QString &exePath)
 {
     if (executeWin(type, exePath)) return true;
-
-#ifdef Q_OS_LINUX
-    if (type == ActionType::Shutdown) {
-        return QProcess::startDetached("shutdown", {"now"});
-    }
-    if (type == ActionType::Restart) {
-        return QProcess::startDetached("reboot");
-    }
-    if (type == ActionType::Suspend || type == ActionType::Sleep) {
-        return QProcess::startDetached("systemctl", {"suspend"});
-    }
-    if (type == ActionType::Lock) {
-        // Best effort: try loginctl
-        if (QProcess::startDetached("loginctl", {"lock-session"})) return true;
-        return QProcess::startDetached("xdg-screensaver", {"lock"});
-    }
-#endif
     return false;
 }
 
