@@ -4,8 +4,7 @@
 #include <QString>
 #include <QSettings>
 
-// Returns a shared settings file path under ProgramData so both the GUI and
-// Windows Service can read the same configuration before user login.
+// Returns a shared settings file path under the active user's Roaming AppData.
 QString mpmSharedSettingsFilePath();
 
 // Convenience to construct QSettings bound to the shared INI file.

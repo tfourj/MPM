@@ -155,7 +155,7 @@ if (WIN32)
     # Build as console subsystem so main() is used
     target_link_options(MPMService PRIVATE -Wl,-subsystem,console)
     target_include_directories(MPMService PRIVATE ${CMAKE_SOURCE_DIR}/src)
-    target_link_libraries(MPMService PRIVATE Qt${QT_VERSION_MAJOR}::Mqtt Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network Crypt32 PowrProf Wtsapi32 Userenv Advapi32)
+    target_link_libraries(MPMService PRIVATE Qt${QT_VERSION_MAJOR}::Mqtt Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network Crypt32 Ole32 Shell32 PowrProf Wtsapi32 Userenv Advapi32)
     set_target_properties(MPMService PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
         WIN32_EXECUTABLE FALSE

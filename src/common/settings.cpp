@@ -5,62 +5,53 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
-#ifdef _WIN32
 #include <windows.h>
 #include <Aclapi.h>
-#endif
+#include <WtsApi32.h>
+#include <ShlObj.h>
 
 QString mpmSharedSettingsFilePath()
 {
-	// Prefer ProgramData for system-wide, pre-login availability
-	// e.g. C:\ProgramData\MPM\MqttPowerManager.ini
-	QString base = QDir::toNativeSeparators("C:/ProgramData/MPM");
-	QDir pd(base);
-	if (!pd.mkpath(".")) {
-		// Fallback to per-user AppData if ProgramData is not writable
-		QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-		if (appData.isEmpty()) appData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-		if (appData.isEmpty()) appData = QDir::homePath();
-		QDir ad(appData);
-		ad.mkpath("MPM");
-		return ad.filePath("MPM/MqttPowerManager.ini");
+	// Cache result to avoid repeated Windows API calls and debug spam
+	static QString s_cachedPath;
+	if (!s_cachedPath.isEmpty()) return s_cachedPath;
+
+	// Determine per-user Roaming AppData path (preferred)
+	QString appData;
+
+	// Try to resolve the active interactive user's AppData (useful when running as LocalSystem service)
+	HANDLE userToken = nullptr;
+	DWORD sessId = WTSGetActiveConsoleSessionId();
+	if (sessId != 0xFFFFFFFF && WTSQueryUserToken(sessId, &userToken)) {
+		PWSTR wpath = nullptr;
+		HRESULT hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, userToken, &wpath);
+		if (SUCCEEDED(hr) && wpath) {
+			appData = QString::fromWCharArray(wpath);
+			CoTaskMemFree(wpath);
+		}
+		CloseHandle(userToken);
 	}
-	const QString filePath = pd.filePath("MqttPowerManager.ini");
-	// Ensure file exists
-	QFile f(filePath);
-	if (!f.exists()) {
-		if (f.open(QIODevice::WriteOnly | QIODevice::Append)) {
-			f.close();
+
+	// Fallbacks: environment, Qt standard paths, home
+	if (appData.isEmpty()) {
+		wchar_t buffer[MAX_PATH];
+		DWORD size = MAX_PATH;
+		if (GetEnvironmentVariableW(L"APPDATA", buffer, size) > 0) {
+			appData = QString::fromWCharArray(buffer);
 		}
 	}
-#ifdef _WIN32
-	// Relax ACL so Authenticated Users have RW access
-	std::wstring wpath = QDir::toNativeSeparators(filePath).toStdWString();
-	PSECURITY_DESCRIPTOR pSD = nullptr; PACL pOldDacl = nullptr;
-	if (GetNamedSecurityInfoW((LPWSTR)wpath.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
-							  nullptr, nullptr, &pOldDacl, nullptr, &pSD) == ERROR_SUCCESS) {
-		SID_IDENTIFIER_AUTHORITY ntauth = SECURITY_NT_AUTHORITY;
-		PSID pAuthUsers = nullptr;
-		if (AllocateAndInitializeSid(&ntauth, 1, SECURITY_AUTHENTICATED_USER_RID, 0,0,0,0,0,0,0, &pAuthUsers)) {
-			EXPLICIT_ACCESSW ea{};
-			ea.grfAccessPermissions = FILE_GENERIC_READ | FILE_GENERIC_WRITE;
-			ea.grfAccessMode = GRANT_ACCESS;
-			ea.grfInheritance = NO_INHERITANCE;
-			ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-			ea.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
-			ea.Trustee.ptstrName = (LPWSTR)pAuthUsers;
-			PACL pNewDacl = nullptr;
-			if (SetEntriesInAclW(1, &ea, pOldDacl, &pNewDacl) == ERROR_SUCCESS) {
-				SetNamedSecurityInfoW((LPWSTR)wpath.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
-									  nullptr, nullptr, pNewDacl, nullptr);
-				if (pNewDacl) LocalFree(pNewDacl);
-			}
-			FreeSid(pAuthUsers);
-		}
-		if (pSD) LocalFree(pSD);
-	}
-#endif
-	return filePath;
+	if (appData.isEmpty())
+		appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+	if (appData.isEmpty())
+		appData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+	if (appData.isEmpty())
+		appData = QDir::homePath();
+	QDir ad(appData + "/MPM");
+	ad.mkpath(".");
+	s_cachedPath = ad.filePath("MqttPowerManager.ini");
+
+	qDebug() << "[Settings] Using settings file path:" << s_cachedPath;
+	return s_cachedPath;
 }
 
 

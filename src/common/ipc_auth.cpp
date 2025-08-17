@@ -6,10 +6,8 @@
 #include <QCryptographicHash>
 #include <QRandomGenerator>
 #include <QFileInfo>
-#ifdef _WIN32
 #include <windows.h>
 #include <Aclapi.h>
-#endif
 
 static QString readAllTrimmed(const QString &path)
 {
@@ -21,11 +19,16 @@ static QString readAllTrimmed(const QString &path)
 
 QString ipcTokenFilePath()
 {
-	// Store token next to settings in ProgramData
+	// Cache to avoid repeated debug logs and recomputation
+	static QString s_cachedTokenPath;
+	if (!s_cachedTokenPath.isEmpty()) return s_cachedTokenPath;
+	// Store token next to settings (now under per-user AppData)
 	QString settingsPath = mpmSharedSettingsFilePath();
 	QFileInfo fi(settingsPath);
 	QDir dir(fi.absolutePath());
-	return dir.filePath("ipc_token");
+	s_cachedTokenPath = dir.filePath("ipc_token");
+	qDebug() << "[IPC] Using IPC token path:" << s_cachedTokenPath;
+	return s_cachedTokenPath;
 }
 
 QString loadOrCreateIpcToken()
@@ -42,7 +45,6 @@ QString loadOrCreateIpcToken()
 		f.write(t.toUtf8());
 		f.flush();
 		f.close();
-#ifdef _WIN32
 		// Relax DACL to allow Authenticated Users read/write so GUI/user can access token
 		std::wstring wpath = QDir::toNativeSeparators(path).toStdWString();
 		PSECURITY_DESCRIPTOR pSD = nullptr; PACL pOldDacl = nullptr;
@@ -68,7 +70,6 @@ QString loadOrCreateIpcToken()
 			}
 			if (pSD) LocalFree(pSD);
 		}
-#endif
 	}
 	return t;
 }
