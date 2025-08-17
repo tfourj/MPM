@@ -50,6 +50,14 @@ private:
     QTimer m_reconnectTimer;
     QSettings m_settings;
     bool m_userInitiatedDisconnect = false;
+    bool m_isControllingService = false;
+    QMqttClient::ClientState m_serviceState = QMqttClient::Disconnected;
+    int m_startPromptMode = 2; // 0=deny,1=confirm,2=ask
+    int m_stopPromptMode = 2;  // 0=deny,1=confirm,2=ask
+    bool m_prevServiceAvailable = false;
+    bool m_prevServiceLocal = false;
+    int m_preferredIpc = 0; // 0=auto,1=local,2=tcp
+    int m_serviceMissCount = 0; // consecutive missed status polls
 
     // MQTT
     QString getSubscribeTopic() const; // mqttpowermanager/%1/+
@@ -65,6 +73,7 @@ private:
     void updateConnectButton();
     void updateStatusLabel(QMqttClient::ClientState state, QMqttClient::ClientError error = QMqttClient::NoError);
     void scheduleReconnectIfNeeded();
+    void saveAllSettingsForce();
 
     // Actions persistence and UI
     struct UserActionCfg {
@@ -100,6 +109,11 @@ private:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void attemptQuitWithServicePrompt();
+    bool isServiceInstalled() const;
+    bool isServiceRunning() const;
+    bool startService();
+    bool stopService();
 };
 
 #endif // MAINWINDOW_H

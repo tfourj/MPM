@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(MPM VERSION 0.2.2 LANGUAGES CXX)
+project(MPM VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -9,12 +9,16 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Mqtt)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Mqtt)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Mqtt Network)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Mqtt Network)
 
 set(PROJECT_SOURCES
         src/main.cpp
         src/mainwindow.cpp
+        src/mainwindow_actions.cpp
+        src/mainwindow_mqtt.cpp
+        src/mainwindow_tray.cpp
+        src/mainwindow_windows.cpp
         src/mainwindow.h
         src/ui/mainwindow.ui
         src/actions/actions.cpp
@@ -23,6 +27,14 @@ set(PROJECT_SOURCES
         src/actions/actiondialog.h
         src/assets/assets.qrc
         src/assets/ico.rc
+        src/common/settings.cpp
+        src/common/settings.h
+        src/common/crypto_win.cpp
+        src/common/crypto_win.h
+        src/common/service_ipc_client.cpp
+        src/common/service_ipc_client.h
+        src/common/ipc_auth.cpp
+        src/common/ipc_auth.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -54,7 +66,7 @@ set_target_properties(MPM PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
 )
 
-target_link_libraries(MPM PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Mqtt)
+target_link_libraries(MPM PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Mqtt Qt${QT_VERSION_MAJOR}::Network)
 
 # Expose version to the application
 target_compile_definitions(MPM PRIVATE APP_VERSION="${PROJECT_VERSION}")
@@ -64,7 +76,7 @@ set_property(TARGET MPM PROPERTY AUTOUIC_SEARCH_PATHS "${CMAKE_CURRENT_SOURCE_DI
 
 # Link Windows system libraries
 if (WIN32)
-    target_link_libraries(MPM PRIVATE Crypt32 Ole32 Shell32 PowrProf)
+    target_link_libraries(MPM PRIVATE Crypt32 Ole32 Shell32 PowrProf Wtsapi32 Userenv Advapi32)
 endif()
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -117,4 +129,35 @@ if(WIN32 AND NOT STATIC_BUILD)
         )
 
     endif()
+endif()
+
+# Windows Service target
+if (WIN32)
+    add_executable(MPMService
+        src/service/main_service.cpp
+        src/service/win_service.cpp
+        src/service/win_service.h
+        src/service/mqtt_daemon.cpp
+        src/service/mqtt_daemon.h
+        src/service/ipc_server.cpp
+        src/service/ipc_server.h
+        src/common/settings.cpp
+        src/common/settings.h
+        src/common/logging.cpp
+        src/common/logging.h
+        src/common/crypto_win.cpp
+        src/common/crypto_win.h
+        src/common/ipc_auth.cpp
+        src/common/ipc_auth.h
+        src/actions/actions.cpp
+        src/actions/actions.h
+    )
+    # Build as console subsystem so main() is used
+    target_link_options(MPMService PRIVATE -Wl,-subsystem,console)
+    target_include_directories(MPMService PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(MPMService PRIVATE Qt${QT_VERSION_MAJOR}::Mqtt Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network Crypt32 PowrProf Wtsapi32 Userenv Advapi32)
+    set_target_properties(MPMService PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
+        WIN32_EXECUTABLE FALSE
+    )
 endif()

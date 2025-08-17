@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QSettings>
+#include "common/settings.h"
 #include <QSharedMemory>
 #include <QMessageBox>
 
@@ -18,7 +19,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    QSettings settings(QSettings::IniFormat, QSettings::UserScope, "MPM", "MqttPowerManager");
+    QSettings settings(mpmSharedSettingsFilePath(), QSettings::IniFormat);
     const bool startMinimized = settings.value("options/startMinimized", false).toBool();
     if (!startMinimized) {
         w.show();
