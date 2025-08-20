@@ -4,7 +4,9 @@
 #include <QString>
 #include <QSettings>
 
-// Returns a shared settings file path under the active user's Roaming AppData.
+// Returns a shared settings file path under machine-wide ProgramData only
+// (e.g., C:\\ProgramData\\MPM\\MqttPowerManager.ini). Users are granted
+// permissions to modify the INI.
 QString mpmSharedSettingsFilePath();
 
 // Convenience to construct QSettings bound to the shared INI file.
