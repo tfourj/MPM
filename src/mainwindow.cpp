@@ -143,19 +143,47 @@ MainWindow::MainWindow(QWidget *parent)
         connect(poll, &QTimer::timeout, this, [this]() {
             // Reflect current transport by the last used sender path
             // Try to query service every tick; if it fails repeatedly, UI will reflect via miss counter below
-            const QByteArray resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status"), QStringLiteral("MPMServiceIpc"), 200);
+            QByteArray resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status2"), QStringLiteral("MPMServiceIpc"), 200);
+            if (resp.isEmpty()) {
+                resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status"), QStringLiteral("MPMServiceIpc"), 200);
+            }
             if (!resp.isEmpty()) {
                 m_serviceMissCount = 0;
-                bool ok = false; int v = QString::fromUtf8(resp).toInt(&ok);
-                if (ok) {
-                    m_serviceState = static_cast<QMqttClient::ClientState>(v);
-                    updateStatusLabel(m_serviceState);
+                bool ok = false;
+                QMqttClient::ClientState rawState = QMqttClient::Disconnected;
+                bool recoActive = false;
+                bool userDisc = false;
+                const QString s = QString::fromUtf8(resp);
+                const QStringList parts = s.split(',');
+                if (parts.size() >= 1) {
+                    int v = parts[0].toInt(&ok);
+                    if (ok) rawState = static_cast<QMqttClient::ClientState>(v);
+                }
+                if (parts.size() >= 2) {
+                    recoActive = (parts[1].trimmed() == QLatin1String("1"));
+                }
+                if (parts.size() >= 4) {
+                    userDisc = (parts[3].trimmed() == QLatin1String("1"));
+                }
+                // Fallback when only simple status returned
+                m_serviceState = rawState;
+                m_serviceReconnectActive = recoActive;
+                m_serviceUserInitiated = userDisc;
+
+                // Compute effective state for UI: show Connecting when auto-reconnect loop is active
+                QMqttClient::ClientState effectiveState = m_serviceState;
+                if (m_serviceState == QMqttClient::Disconnected && m_serviceReconnectActive && !m_serviceUserInitiated) {
+                    effectiveState = QMqttClient::Connecting;
+                }
+
+                if (true) {
+                    updateStatusLabel(effectiveState);
                     updateTrayIconByState();
                     if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Local)");
                     if (ui && ui->pushButtonConnect) {
-                        switch (m_serviceState) {
+                        switch (effectiveState) {
                         case QMqttClient::Connected: ui->pushButtonConnect->setText("Disconnect"); break;
-                        case QMqttClient::Connecting: ui->pushButtonConnect->setText("Connecting..."); break;
+                        case QMqttClient::Connecting: ui->pushButtonConnect->setText("Connecting.."); break;
                         case QMqttClient::Disconnected: default: ui->pushButtonConnect->setText("Connect"); break;
                         }
                     }

@@ -50,6 +50,18 @@ void IpcServer::handleSocket(QLocalSocket *sock)
     if (cmd == "status") {
         const auto state = m_daemon ? m_daemon->state() : QMqttClient::Disconnected;
         resp = QByteArray::number(static_cast<int>(state));
+    } else if (cmd == "status2") {
+        const auto state = m_daemon ? m_daemon->state() : QMqttClient::Disconnected;
+        const bool reco = m_daemon ? m_daemon->isReconnectActive() : false;
+        const bool autoReco = m_daemon ? m_daemon->isAutoReconnectEnabled() : false;
+        const bool userDisc = m_daemon ? m_daemon->isUserInitiatedDisconnect() : false;
+        resp = QByteArray::number(static_cast<int>(state));
+        resp.append(',');
+        resp.append(reco ? '1' : '0');
+        resp.append(',');
+        resp.append(autoReco ? '1' : '0');
+        resp.append(',');
+        resp.append(userDisc ? '1' : '0');
     } else if (cmd == "getlogs") {
         resp = takeRecentLogs().toUtf8();
     } else if (cmd == "reload-settings") {

@@ -62,8 +62,8 @@ void MqttDaemon::reloadSettings()
 		// Let onStateChanged schedule reconnect
 	}
 	// If autoConnect is enabled and we're disconnected, connect now
-	if (m_autoConnect && m_client->state() == QMqttClient::Disconnected) {
-		m_userInitiatedDisconnect = false;
+	// Do not auto-connect if user explicitly requested disconnect
+	if (m_autoConnect && m_client->state() == QMqttClient::Disconnected && !m_userInitiatedDisconnect) {
 		m_client->connectToHost();
 	}
 	// If autoReconnect toggled on while disconnected, start timer

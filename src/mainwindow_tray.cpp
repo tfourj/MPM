@@ -60,6 +60,9 @@ void MainWindow::updateTrayIconByState()
     if (!m_trayIcon) return;
     QIcon icon;
     QMqttClient::ClientState effectiveState = m_isControllingService ? m_serviceState : m_client->state();
+    if (m_isControllingService && effectiveState == QMqttClient::Disconnected && m_serviceReconnectActive && !m_serviceUserInitiated) {
+        effectiveState = QMqttClient::Connecting;
+    }
     switch (effectiveState) {
     case QMqttClient::Connected:
         icon = m_trayIconConnected.isNull() ? windowIcon() : m_trayIconConnected;

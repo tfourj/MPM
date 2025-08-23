@@ -18,9 +18,23 @@ public:
 	// Control & status
 	QMqttClient::ClientState state() const { return m_client ? m_client->state() : QMqttClient::Disconnected; }
 	void forceConnect() { if (m_client && m_client->state() != QMqttClient::Connected) { m_userInitiatedDisconnect = false; m_client->connectToHost(); } }
-	void forceDisconnect() { if (m_client && m_client->state() != QMqttClient::Disconnected) { m_userInitiatedDisconnect = true; publishAvailabilityOffline(); m_client->disconnectFromHost(); } }
+	void forceDisconnect() {
+		if (!m_client) return;
+		// Always mark as user-initiated and stop auto-reconnect loop
+		m_userInitiatedDisconnect = true;
+		if (m_reconnectTimer) m_reconnectTimer->stop();
+		publishAvailabilityOffline();
+		if (m_client->state() != QMqttClient::Disconnected) {
+			m_client->disconnectFromHost();
+		}
+	}
 	void reloadSettings();
 	void notifyGoingOffline();
+
+	// Extended status helpers
+	bool isReconnectActive() const { return m_reconnectTimer && m_reconnectTimer->isActive(); }
+	bool isAutoReconnectEnabled() const { return m_autoReconnect; }
+	bool isUserInitiatedDisconnect() const { return m_userInitiatedDisconnect; }
 
 private slots:
 	void onConnected();

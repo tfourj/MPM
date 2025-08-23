@@ -52,6 +52,8 @@ private:
     bool m_userInitiatedDisconnect = false;
     bool m_isControllingService = false;
     QMqttClient::ClientState m_serviceState = QMqttClient::Disconnected;
+    bool m_serviceReconnectActive = false;
+    bool m_serviceUserInitiated = false;
     int m_startPromptMode = 2; // 0=deny,1=confirm,2=ask
     int m_stopPromptMode = 2;  // 0=deny,1=confirm,2=ask
     bool m_prevServiceAvailable = false;

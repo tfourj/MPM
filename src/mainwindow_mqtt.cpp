@@ -14,15 +14,15 @@ void MainWindow::onConnectClicked()
 
     if (m_isControllingService || ServiceIpcClient::isAvailable()) {
         m_isControllingService = true;
-        ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("reload-settings"), QStringLiteral("MPMServiceIpc"), 200);
-        if (m_serviceState == QMqttClient::Disconnected) {
-            log("Service: connect requested");
-            ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("connect"), QStringLiteral("MPMServiceIpc"), 200);
-        } else if (m_serviceState == QMqttClient::Connected) {
+        const bool effectiveConnecting = (m_serviceState == QMqttClient::Connecting)
+            || (m_serviceState == QMqttClient::Disconnected && m_serviceReconnectActive && !m_serviceUserInitiated);
+        if (m_serviceState == QMqttClient::Connected || effectiveConnecting) {
             log("Service: disconnect requested");
             ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("disconnect"), QStringLiteral("MPMServiceIpc"), 200);
         } else {
-            log("Service: busy");
+            ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("reload-settings"), QStringLiteral("MPMServiceIpc"), 200);
+            log("Service: connect requested");
+            ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("connect"), QStringLiteral("MPMServiceIpc"), 200);
         }
         return;
     }
