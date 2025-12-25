@@ -19,92 +19,22 @@
 #include <QClipboard>
 #include <QApplication>
 #include <QtGlobal>
-#include "actions/actiondialog.h"
-#ifdef Q_OS_WIN
+#include <QThread>
 #include <QSettings>
-#include <windows.h>
-#include <wincrypt.h>
-#include <shobjidl.h>
-#include <shlguid.h>
-#include <objbase.h>
-#endif
-namespace {
-#ifdef Q_OS_WIN
-QByteArray encryptWithDpapi(const QByteArray &plain)
-{
-    if (plain.isEmpty()) return QByteArray();
-    DATA_BLOB in{};
-    in.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plain.constData()));
-    in.cbData = static_cast<DWORD>(plain.size());
-    DATA_BLOB out{};
-    if (!CryptProtectData(&in, L"MPM", nullptr, nullptr, nullptr, 0, &out)) {
-        return QByteArray();
-    }
-    QByteArray encrypted(reinterpret_cast<const char*>(out.pbData), static_cast<int>(out.cbData));
-    if (out.pbData) LocalFree(out.pbData);
-    return encrypted.toBase64();
-}
-
-QByteArray decryptWithDpapi(const QByteArray &cipherBase64)
-{
-    if (cipherBase64.isEmpty()) return QByteArray();
-    QByteArray cipher = QByteArray::fromBase64(cipherBase64);
-    DATA_BLOB in{};
-    in.pbData = reinterpret_cast<BYTE*>(cipher.data());
-    in.cbData = static_cast<DWORD>(cipher.size());
-    DATA_BLOB out{};
-    LPWSTR description = nullptr;
-    if (!CryptUnprotectData(&in, &description, nullptr, nullptr, nullptr, 0, &out)) {
-        return QByteArray();
-    }
-    if (description) LocalFree(description);
-    QByteArray plain(reinterpret_cast<const char*>(out.pbData), static_cast<int>(out.cbData));
-    if (out.pbData) LocalFree(out.pbData);
-    return plain;
-}
-#endif
-}
-
-
-void MainWindow::onAddAction()
-{
-    ActionDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted) return;
-    const auto res = dlg.getResult();
-    UserActionCfg a{ res.customName, res.type, res.expectedMessage, res.exePath };
-    m_actions.push_back(a);
-    saveActions();
-    refreshActionsList();
-}
-
-void MainWindow::onEditSelectedAction()
-{
-    const int row = ui->listWidgetActions->currentRow();
-    if (row < 0 || row >= m_actions.size()) return;
-    ActionDialog dlg(this);
-    ActionDialog::Result init{ m_actions[row].customName, m_actions[row].type, m_actions[row].expectedMessage, m_actions[row].exePath };
-    dlg.setInitial(init);
-    if (dlg.exec() != QDialog::Accepted) return;
-    const auto res = dlg.getResult();
-    m_actions[row] = UserActionCfg{ res.customName, res.type, res.expectedMessage, res.exePath };
-    saveActions();
-    refreshActionsList();
-}
-
-void MainWindow::onDeleteSelectedAction()
-{
-    const int row = ui->listWidgetActions->currentRow();
-    if (row < 0 || row >= m_actions.size()) return;
-    if (QMessageBox::question(this, "Delete Action", "Are you sure?") != QMessageBox::Yes) return;
-    m_actions.removeAt(row);
-    saveActions();
-    refreshActionsList();
-}
+#include "common/settings.h"
+#include "common/service_ipc_client.h"
+#include "common/crypto_win.h"
+#include <QSystemTrayIcon>
+#include <QAction>
+#include <QComboBox>
+#include <QCheckBox>
+#include <QSpinBox>
+#include <QSessionManager>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
-    , m_settings(QSettings::IniFormat, QSettings::UserScope, "MPM", "MqttPowerManager")
+    , m_settings(mpmSharedSettingsFilePath(), QSettings::IniFormat)
 {
     ui->setupUi(this);
 
@@ -168,15 +98,15 @@ MainWindow::MainWindow(QWidget *parent)
     loadSettings();
 
     connect(ui->checkBoxStartWithWindows, &QCheckBox::toggled, this, &MainWindow::onStartWithWindowsToggled);
-    connect(ui->checkBoxAutoConnect, &QCheckBox::toggled, this, [this](bool){ saveSettingsIfNeeded(); });
-    connect(ui->checkBoxAutoReconnect, &QCheckBox::toggled, this, [this](bool){ saveSettingsIfNeeded(); });
-    connect(ui->spinBoxReconnectSec, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){ saveSettingsIfNeeded(); });
-    connect(ui->checkBoxStartMinimized, &QCheckBox::toggled, this, [this](bool){ saveSettingsIfNeeded(); });
+    connect(ui->checkBoxAutoConnect, &QCheckBox::toggled, this, [this](bool){ saveAllSettingsForce(); });
+    connect(ui->checkBoxAutoReconnect, &QCheckBox::toggled, this, [this](bool){ saveAllSettingsForce(); });
+    connect(ui->spinBoxReconnectSec, qOverload<int>(&QSpinBox::valueChanged), this, [this](int){ saveAllSettingsForce(); });
+    connect(ui->checkBoxStartMinimized, &QCheckBox::toggled, this, [this](bool){ saveAllSettingsForce(); });
     // Startup path lock UI
     connect(ui->checkBoxLockStartupPath, &QCheckBox::toggled, this, &MainWindow::onStartupPathLockToggled);
     connect(ui->pushButtonBrowseStartupPath, &QPushButton::clicked, this, &MainWindow::onBrowseStartupExe);
     connect(ui->lineEditStartupPath, &QLineEdit::editingFinished, this, [this]() {
-        saveSettingsIfNeeded();
+        saveAllSettingsForce();
         if (ui->checkBoxStartWithWindows->isChecked()) updateWindowsStartup(true);
     });
     connect(ui->pushButtonCreateStartMenuShortcut, &QPushButton::clicked, this, &MainWindow::onCreateStartMenuShortcut);
@@ -185,6 +115,124 @@ MainWindow::MainWindow(QWidget *parent)
     updateConnectButton();
     updateStatusLabel(m_client->state());
     updateTrayIconByState();
+
+    // Load service-only preference
+    const bool serviceOnly = m_settings.value("service/useOnly", false).toBool();
+    if (ui->checkBoxServiceUseOnly) ui->checkBoxServiceUseOnly->setChecked(serviceOnly);
+    // If service IPC is available or service-only is enabled, control service instead of local client
+    const bool serviceAvailable = ServiceIpcClient::isAvailable();
+    if (serviceAvailable || serviceOnly) {
+        log("Service detected: GUI will control service connection");
+        m_isControllingService = true;
+        // Apply preferred IPC; small wait for preferred transport
+        bool localNow = false;
+        if (m_preferredIpc == 1) {
+            for (int i = 0; i < 5; ++i) { if (ServiceIpcClient::isAvailableLocal()) { localNow = true; break; } QThread::msleep(100); }
+        } else if (m_preferredIpc == 2) {
+            localNow = false;
+        } else {
+            for (int i = 0; i < 3; ++i) { if (ServiceIpcClient::isAvailableLocal()) { localNow = true; break; } QThread::msleep(100); }
+        }
+        m_prevServiceLocal = true;
+        const QString srcText = QString("Source: Service (Local)");
+        if (ui->labelConnSource) ui->labelConnSource->setText(srcText);
+        log(QString("IPC transport: Local"));
+        // Mirror service status into GUI periodically
+        QTimer *poll = new QTimer(this);
+        poll->setInterval(1000);
+        connect(poll, &QTimer::timeout, this, [this]() {
+            // Reflect current transport by the last used sender path
+            // Try to query service every tick; if it fails repeatedly, UI will reflect via miss counter below
+            QByteArray resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status2"), QStringLiteral("MPMServiceIpc"), 200);
+            if (resp.isEmpty()) {
+                resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status"), QStringLiteral("MPMServiceIpc"), 200);
+            }
+            if (!resp.isEmpty()) {
+                m_serviceMissCount = 0;
+                bool ok = false;
+                QMqttClient::ClientState rawState = QMqttClient::Disconnected;
+                bool recoActive = false;
+                bool userDisc = false;
+                const QString s = QString::fromUtf8(resp);
+                const QStringList parts = s.split(',');
+                if (parts.size() >= 1) {
+                    int v = parts[0].toInt(&ok);
+                    if (ok) rawState = static_cast<QMqttClient::ClientState>(v);
+                }
+                if (parts.size() >= 2) {
+                    recoActive = (parts[1].trimmed() == QLatin1String("1"));
+                }
+                if (parts.size() >= 4) {
+                    userDisc = (parts[3].trimmed() == QLatin1String("1"));
+                }
+                // Fallback when only simple status returned
+                m_serviceState = rawState;
+                m_serviceReconnectActive = recoActive;
+                m_serviceUserInitiated = userDisc;
+
+                // Compute effective state for UI: show Connecting when auto-reconnect loop is active
+                QMqttClient::ClientState effectiveState = m_serviceState;
+                if (m_serviceState == QMqttClient::Disconnected && m_serviceReconnectActive && !m_serviceUserInitiated) {
+                    effectiveState = QMqttClient::Connecting;
+                }
+
+                if (true) {
+                    updateStatusLabel(effectiveState);
+                    updateTrayIconByState();
+                    if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Local)");
+                    if (ui && ui->pushButtonConnect) {
+                        switch (effectiveState) {
+                        case QMqttClient::Connected: ui->pushButtonConnect->setText("Disconnect"); break;
+                        case QMqttClient::Connecting: ui->pushButtonConnect->setText("Connecting.."); break;
+                        case QMqttClient::Disconnected: default: ui->pushButtonConnect->setText("Connect"); break;
+                        }
+                    }
+                }
+            } else {
+                // Missed status response
+                m_serviceMissCount = qMin(m_serviceMissCount + 1, 10);
+                if (m_serviceMissCount >= 3) {
+                    if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Unavailable)");
+                    updateStatusLabel(QMqttClient::Disconnected);
+                    updateTrayIconByState();
+                    if (ui && ui->pushButtonConnect) ui->pushButtonConnect->setText("Connect");
+                }
+            }
+            static int tick = 0; tick = (tick + 1) % 3;
+            if (tick == 0) {
+                const QByteArray logs = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("getlogs"), QStringLiteral("MPMServiceIpc"), 200);
+                if (!logs.isEmpty()) {
+                    const QString s = QString::fromUtf8(logs);
+                    if (!s.trimmed().isEmpty()) ui->textEditLog->append(s.trimmed());
+                }
+            }
+        });
+        poll->start();
+        // If user forces service-only but service isn't available, avoid lag: disable connect
+        if (serviceOnly && !serviceAvailable && ui && ui->pushButtonConnect) {
+            ui->pushButtonConnect->setEnabled(false);
+            ui->pushButtonConnect->setToolTip("Service-only mode enabled but service is not available");
+        }
+    }
+    // If service-only is enabled and service becomes available later, re-enable Connect and switch source label
+    QTimer *svcAvailPoll = new QTimer(this);
+    svcAvailPoll->setInterval(1000);
+    connect(svcAvailPoll, &QTimer::timeout, this, [this]() {
+        const int lt = ServiceIpcClient::lastTransport();
+        const bool local = (lt == 1) ? true : ServiceIpcClient::isAvailableLocal();
+        if (ui && ui->checkBoxServiceUseOnly && ui->checkBoxServiceUseOnly->isChecked()) {
+            if (local) {
+                if (ui->pushButtonConnect && !ui->pushButtonConnect->isEnabled()) {
+                    ui->pushButtonConnect->setEnabled(true);
+                    ui->pushButtonConnect->setToolTip("");
+                    log(QString("Service became available via Local"));
+                }
+                if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Local)");
+                m_isControllingService = true;
+            }
+        }
+    });
+    svcAvailPoll->start();
 
     ensureTray();
     // Ensure registry startup reflects setting
@@ -199,7 +247,33 @@ MainWindow::MainWindow(QWidget *parent)
 #endif
 
     if (m_settings.value("options/autoConnect", false).toBool()) {
-        QTimer::singleShot(0, this, [this]() { onConnectClicked(); });
+        // If service-only is enabled, don't auto-connect the GUI client to avoid lag and respect preference
+        if (!(ui->checkBoxServiceUseOnly && ui->checkBoxServiceUseOnly->isChecked())) {
+            QTimer::singleShot(0, this, [this]() { onConnectClicked(); });
+        }
+    }
+
+    // Service prompt modes & IPC prefs
+    m_startPromptMode = m_settings.value("service/startPromptMode", 2).toInt();
+    m_stopPromptMode = m_settings.value("service/stopPromptMode", 2).toInt();
+    if (ui->comboBoxStartMode) ui->comboBoxStartMode->setCurrentIndex(qBound(0, m_startPromptMode, 2));
+    if (ui->comboBoxStopMode) ui->comboBoxStopMode->setCurrentIndex(qBound(0, m_stopPromptMode, 2));
+    m_preferredIpc = 1; // Local only
+    if (isServiceInstalled() && !isServiceRunning()) {
+        // 0=deny: do nothing
+        // 1=confirm: start without asking
+        // 2=ask: show prompt
+        if (m_startPromptMode == 1) {
+            if (!startService()) {
+                QMessageBox::warning(this, "Service", "Failed to start service. Please run as Administrator.");
+            }
+        } else if (m_startPromptMode == 2) {
+            if (QMessageBox::question(this, "Start Service", "MPM service is installed but not running. Start it now?") == QMessageBox::Yes) {
+                if (!startService()) {
+                    QMessageBox::warning(this, "Service", "Failed to start service. Please run as Administrator.");
+                }
+            }
+        }
     }
 
     // Ensure we publish offline on app exit (graceful)
@@ -207,8 +281,73 @@ MainWindow::MainWindow(QWidget *parent)
         publishAvailabilityOffline();
     });
 
+    // On OS logout/shutdown or session end, optionally stop the service
+    connect(qApp, &QGuiApplication::commitDataRequest, this, [this](QSessionManager &){
+        if (m_isControllingService) {
+            if (m_stopPromptMode == 1) {
+                stopService();
+            } else if (m_stopPromptMode == 2) {
+                if (QMessageBox::question(this, "Stop Service", "Do you want to stop the MPM service as well?") == QMessageBox::Yes) {
+                    stopService();
+                }
+            }
+        }
+    });
+
     // Wire save settings button
     connect(ui->pushButtonSaveSettings, &QPushButton::clicked, this, &MainWindow::onSaveSettingsClicked);
+
+    // Service control buttons
+    if (ui->pushButtonServiceStart) {
+        connect(ui->pushButtonServiceStart, &QPushButton::clicked, this, [this]() {
+            if (!isServiceInstalled()) { QMessageBox::warning(this, "Service", "Service is not installed."); return; }
+            if (startService()) log("Service start requested"); else QMessageBox::warning(this, "Service", "Failed to start service.");
+        });
+    }
+    if (ui->pushButtonServiceStop) {
+        connect(ui->pushButtonServiceStop, &QPushButton::clicked, this, [this]() {
+            if (!isServiceInstalled()) { QMessageBox::warning(this, "Service", "Service is not installed."); return; }
+            if (stopService()) log("Service stop requested"); else QMessageBox::warning(this, "Service", "Failed to stop service.");
+        });
+    }
+    if (ui->pushButtonServiceCheck) {
+        connect(ui->pushButtonServiceCheck, &QPushButton::clicked, this, [this]() {
+            if (!isServiceInstalled()) { QMessageBox::information(this, "Service", "Service is not installed."); return; }
+            QMessageBox::information(this, "Service", isServiceRunning() ? "Service is running" : "Service is stopped");
+        });
+    }
+    if (ui->comboBoxStartMode) {
+        connect(ui->comboBoxStartMode, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int idx){
+            m_startPromptMode = qBound(0, idx, 2);
+            m_settings.setValue("service/startPromptMode", m_startPromptMode);
+        });
+    }
+    if (ui->comboBoxStopMode) {
+        connect(ui->comboBoxStopMode, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int idx){
+            m_stopPromptMode = qBound(0, idx, 2);
+            m_settings.setValue("service/stopPromptMode", m_stopPromptMode);
+        });
+    }
+    // TCP-related UI elements removed; default to Local-only
+    if (ui->checkBoxServiceUseOnly) {
+        connect(ui->checkBoxServiceUseOnly, &QCheckBox::toggled, this, [this](bool on){
+            m_settings.setValue("service/useOnly", on);
+            if (on) {
+                m_isControllingService = true;
+                log("Service-only mode enabled: GUI MQTT disabled");
+                // Disable GUI connect if service not available to prevent lag
+                if (!ServiceIpcClient::isAvailable() && ui && ui->pushButtonConnect) {
+                    ui->pushButtonConnect->setEnabled(false);
+                    ui->pushButtonConnect->setToolTip("Service-only mode: service not available");
+                }
+            } else {
+                if (ui && ui->pushButtonConnect) {
+                    ui->pushButtonConnect->setEnabled(true);
+                    ui->pushButtonConnect->setToolTip("");
+                }
+            }
+        });
+    }
 
     log("Ready. Enter username and connect.");
 }
@@ -218,658 +357,8 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-void MainWindow::onConnectClicked()
-{
-    saveSettingsIfNeeded();
-    applyUiToClient();
-
-    if (m_client->state() == QMqttClient::Disconnected) {
-        // If a reconnect is pending, clicking acts as cancel
-        if (m_reconnectTimer.isActive()) {
-            m_reconnectTimer.stop();
-            log("Auto-reconnect canceled.");
-            updateConnectButton();
-            return;
-        }
-        log("Connecting...");
-        m_userInitiatedDisconnect = false;
-        const int timeoutSec = ui->spinBoxTimeoutSec->value();
-        if (timeoutSec > 0) {
-            m_connectTimeoutTimer.start(timeoutSec * 1000);
-        }
-        // Ensure LWT is configured just before connecting
-        updateAvailabilityWill();
-        m_client->connectToHost();
-        m_reconnectTimer.stop();
-    } else {
-        log("Disconnecting...");
-        m_connectTimeoutTimer.stop();
-        // Gracefully publish offline retained before disconnect
-        publishAvailabilityOffline();
-        m_userInitiatedDisconnect = true;
-        m_client->disconnectFromHost();
-        m_reconnectTimer.stop();
-    }
-}
-
-void MainWindow::onConnected()
-{
-    m_connectTimeoutTimer.stop();
-    log("Connected to MQTT broker");
-
-    // Subscribe to topic
-    QString topic = getSubscribeTopic();
-    if (!topic.isEmpty()) {
-        auto subscription = m_client->subscribe(topic, 0);
-        if (!subscription) {
-            log("Failed to subscribe to " + topic);
-        } else {
-            log("Subscribed to topic: " + topic);
-        }
-    } else {
-        log("Username/custom ID is empty!");
-    }
-
-    // Publish availability online retained so HA sees us immediately
-    publishAvailabilityOnline();
-}
-
-void MainWindow::onStateChanged(QMqttClient::ClientState state)
-{
-    updateConnectButton();
-    updateTrayIconByState();
-    updateStatusLabel(state);
-    switch (state) {
-    case QMqttClient::Disconnected:
-        log("MQTT state: Disconnected");
-        if (!m_userInitiatedDisconnect) {
-            scheduleReconnectIfNeeded();
-        }
-        break;
-    case QMqttClient::Connecting:
-        log("MQTT state: Connecting");
-        break;
-    case QMqttClient::Connected:
-        log("MQTT state: Connected");
-        m_reconnectTimer.stop();
-        break;
-    }
-}
-
-void MainWindow::onErrorChanged(QMqttClient::ClientError error)
-{
-    if (error == QMqttClient::NoError) return;
-    log(QString("MQTT error: %1").arg(static_cast<int>(error)));
-    updateStatusLabel(m_client->state(), error);
-}
-
-void MainWindow::onConnectTimeout()
-{
-    if (m_client->state() == QMqttClient::Connecting) {
-        log("Connection timed out. Aborting.");
-        m_client->disconnectFromHost();
-    }
-}
-
-void MainWindow::onSaveSettingsClicked()
-{
-    saveSettingsIfNeeded();
-    // Display the current settings to the log/output as a simple confirmation
-    QStringList lines;
-    lines << "Settings saved:";
-    lines << QString("- Username/Custom ID: %1").arg(ui->lineEditUsername->text());
-    lines << QString("- Host: %1").arg(ui->lineEditHost->text());
-    lines << QString("- Port: %1").arg(ui->spinBoxPort->value());
-    lines << QString("- MQTT Username: %1").arg(ui->lineEditMqttUsername->text());
-    lines << QString("- Remember: %1").arg(ui->checkBoxRemember->isChecked() ? "true" : "false");
-    lines << QString("- Print only: %1").arg(ui->checkBoxPrintOnly->isChecked() ? "true" : "false");
-    lines << QString("- Timeout (s): %1").arg(ui->spinBoxTimeoutSec->value());
-    lines << QString("- Start with Windows: %1").arg(ui->checkBoxStartWithWindows->isChecked() ? "true" : "false");
-    lines << QString("- Auto-connect: %1").arg(ui->checkBoxAutoConnect->isChecked() ? "true" : "false");
-    lines << QString("- Start minimized: %1").arg(ui->checkBoxStartMinimized->isChecked() ? "true" : "false");
-    log(lines.join('\n'));
-}
-
-void MainWindow::scheduleReconnectIfNeeded()
-{
-    if (!ui->checkBoxAutoReconnect->isChecked()) return;
-    if (m_client->state() != QMqttClient::Disconnected) return;
-    if (m_userInitiatedDisconnect) return;
-    if (m_reconnectTimer.isActive()) return;
-    const int delaySec = std::max(1, ui->spinBoxReconnectSec->value());
-    log(QString("Scheduling auto-reconnect in %1 s").arg(delaySec));
-    m_reconnectTimer.start(delaySec * 1000);
-    updateConnectButton();
-}
-
-QString MainWindow::getSubscribeTopic() const
-{
-    QString username = ui->lineEditUsername->text().trimmed();
-    if (username.isEmpty()) return QString();
-    // Subscribe to all actions for this user
-    return QString("mqttpowermanager/%1/+" ).arg(username);
-}
-
-void MainWindow::onMessageReceived(const QByteArray &message, const QMqttTopicName &topic)
-{
-    QString msg = QString::fromUtf8(message);
-    
-    if (topic.name().endsWith("/health")) {
-        return;
-    }
-
-    log("Received message: " + msg + " on topic: " + topic.name());
-
-    if (ui->checkBoxPrintOnly->isChecked()) {
-        log("Print only mode enabled — ignoring commands.");
-        return;
-    }
-
-    // Topic format: mqttpowermanager/%1/<action_name>
-    const QStringList parts = topic.name().split('/');
-    QString actionName = parts.size() >= 3 ? parts.last() : QString();
-
-    if (ui->checkBoxPrintOnly->isChecked()) {
-        return;
-    }
-
-    // Find configured action matching actionName and expected message
-    auto it = std::find_if(m_actions.begin(), m_actions.end(), [&](const UserActionCfg &a){
-        return a.customName.compare(actionName, Qt::CaseInsensitive) == 0
-               && msg.compare(a.expectedMessage, Qt::CaseInsensitive) == 0;
-    });
-    if (it == m_actions.end()) {
-        log("Message ignored (no matching configured action).");
-        return;
-    }
-
-    if (!ActionsRegistry::execute(it->type, it->exePath)) {
-        log("Action executed as no-op or not supported on this OS.");
-    }
-}
-
 void MainWindow::log(const QString &msg)
 {
     ui->textEditLog->append(msg);
 }
 
-void MainWindow::updateStatusLabel(QMqttClient::ClientState state, QMqttClient::ClientError error)
-{
-    if (!ui->labelStatus) return;
-    QString text;
-    QString colorCss;
-    if (error != QMqttClient::NoError) {
-        text = "Status: Error";
-        colorCss = "color: red;";
-    } else {
-        switch (state) {
-        case QMqttClient::Connected:
-            text = "Status: Connected \xF0\x9F\x9F\xA2"; // green circle
-            colorCss = "color: green;"; // green text
-            break;
-        case QMqttClient::Connecting:
-            text = "Status: Connecting";
-            colorCss = "color: white;";
-            break;
-        case QMqttClient::Disconnected:
-        default:
-            text = "Status: Disconnected";
-            colorCss = "color: white;";
-            break;
-        }
-    }
-    ui->labelStatus->setText(text);
-    ui->labelStatus->setStyleSheet(colorCss);
-}
-
-void MainWindow::loadSettings()
-{
-    // General
-    ui->lineEditUsername->setText(m_settings.value("user/customId").toString());
-
-    // MQTT
-    ui->lineEditHost->setText(m_settings.value("mqtt/host", "127.0.0.1").toString());
-    ui->spinBoxPort->setValue(m_settings.value("mqtt/port", 1883).toInt());
-    ui->lineEditMqttUsername->setText(m_settings.value("mqtt/username").toString());
-#ifdef Q_OS_WIN
-    {
-        QByteArray enc = m_settings.value("mqtt/passwordEnc").toByteArray();
-        if (enc.isEmpty()) {
-            // Migrate legacy plaintext if present
-            const QString legacy = m_settings.value("mqtt/password").toString();
-            if (!legacy.isEmpty()) {
-                QByteArray cipher = encryptWithDpapi(legacy.toUtf8());
-                if (!cipher.isEmpty()) {
-                    m_settings.setValue("mqtt/passwordEnc", cipher);
-                    m_settings.remove("mqtt/password");
-                    ui->lineEditMqttPassword->setText(legacy);
-                } else {
-                    ui->lineEditMqttPassword->setText(legacy);
-                }
-            } else {
-                ui->lineEditMqttPassword->clear();
-            }
-        } else {
-            QByteArray plain = decryptWithDpapi(enc);
-            ui->lineEditMqttPassword->setText(QString::fromUtf8(plain));
-        }
-    }
-#else
-    // Non-Windows fallback: keep legacy behavior
-    ui->lineEditMqttPassword->setText(m_settings.value("mqtt/password").toString());
-#endif
-
-    // Options
-    ui->checkBoxRemember->setChecked(m_settings.value("options/remember", true).toBool());
-    ui->checkBoxPrintOnly->setChecked(m_settings.value("options/printOnly", false).toBool());
-    ui->spinBoxTimeoutSec->setValue(m_settings.value("options/timeoutSec", 5).toInt());
-    ui->checkBoxStartWithWindows->setChecked(m_settings.value("options/startWithWindows", false).toBool());
-    ui->checkBoxAutoConnect->setChecked(m_settings.value("options/autoConnect", false).toBool());
-    ui->checkBoxAutoReconnect->setChecked(m_settings.value("options/autoReconnect", false).toBool());
-    ui->spinBoxReconnectSec->setValue(m_settings.value("options/reconnectSec", 5).toInt());
-    ui->checkBoxStartMinimized->setChecked(m_settings.value("options/startMinimized", false).toBool());
-    // Startup path lock
-    const bool lockPath = m_settings.value("options/startupPathLocked", false).toBool();
-    ui->checkBoxLockStartupPath->setChecked(lockPath);
-    const QString defaultExe = QCoreApplication::applicationFilePath();
-    ui->lineEditStartupPath->setText(m_settings.value("options/startupPath", defaultExe).toString());
-    ui->lineEditStartupPath->setEnabled(lockPath);
-    ui->pushButtonBrowseStartupPath->setEnabled(lockPath);
-}
-
-void MainWindow::saveSettingsIfNeeded()
-{
-    const bool remember = ui->checkBoxRemember->isChecked();
-    m_settings.setValue("options/remember", remember);
-
-    // Always persist non-sensitive options
-    m_settings.setValue("options/printOnly", ui->checkBoxPrintOnly->isChecked());
-    m_settings.setValue("options/timeoutSec", ui->spinBoxTimeoutSec->value());
-    m_settings.setValue("options/autoConnect", ui->checkBoxAutoConnect->isChecked());
-    m_settings.setValue("options/autoReconnect", ui->checkBoxAutoReconnect->isChecked());
-    m_settings.setValue("options/reconnectSec", ui->spinBoxReconnectSec->value());
-    m_settings.setValue("options/startWithWindows", ui->checkBoxStartWithWindows->isChecked());
-    m_settings.setValue("options/startMinimized", ui->checkBoxStartMinimized->isChecked());
-    m_settings.setValue("options/startupPathLocked", ui->checkBoxLockStartupPath->isChecked());
-    m_settings.setValue("options/startupPath", ui->lineEditStartupPath->text());
-
-    if (!remember) return;
-
-    // General
-    m_settings.setValue("user/customId", ui->lineEditUsername->text());
-
-    // MQTT
-    m_settings.setValue("mqtt/host", ui->lineEditHost->text());
-    m_settings.setValue("mqtt/port", ui->spinBoxPort->value());
-    m_settings.setValue("mqtt/username", ui->lineEditMqttUsername->text());
-#ifdef Q_OS_WIN
-    {
-        const QString pw = ui->lineEditMqttPassword->text();
-        if (pw.isEmpty()) {
-            m_settings.remove("mqtt/passwordEnc");
-        } else {
-            QByteArray enc = encryptWithDpapi(pw.toUtf8());
-            if (!enc.isEmpty()) {
-                m_settings.setValue("mqtt/passwordEnc", enc);
-            }
-        }
-        // Ensure legacy key is removed when remember is on
-        m_settings.remove("mqtt/password");
-    }
-#else
-    // Non-Windows fallback
-    m_settings.setValue("mqtt/password", ui->lineEditMqttPassword->text());
-#endif
-}
-
-void MainWindow::applyUiToClient()
-{
-    m_client->setHostname(ui->lineEditHost->text().trimmed());
-    m_client->setPort(static_cast<quint16>(ui->spinBoxPort->value()));
-
-    // MQTT auth
-    m_client->setUsername(ui->lineEditMqttUsername->text());
-    m_client->setPassword(ui->lineEditMqttPassword->text());
-}
-
-QString MainWindow::getAvailabilityTopic() const
-{
-    const QString username = ui->lineEditUsername->text().trimmed();
-    if (username.isEmpty()) return QString();
-    return QString("mqttpowermanager/%1/health").arg(username);
-}
-
-void MainWindow::updateAvailabilityWill()
-{
-    const QString topic = getAvailabilityTopic();
-    if (topic.isEmpty()) return;
-
-    m_client->setWillTopic(topic);
-    m_client->setWillMessage(QByteArrayLiteral("offline"));
-    m_client->setWillQoS(0);
-    m_client->setWillRetain(true);
-}
-
-void MainWindow::publishAvailabilityOnline()
-{
-    const QString topic = getAvailabilityTopic();
-    if (topic.isEmpty()) return;
-    m_client->publish(topic, QByteArrayLiteral("online"), 0, true);
-}
-
-void MainWindow::publishAvailabilityOffline()
-{
-    const QString topic = getAvailabilityTopic();
-    if (topic.isEmpty()) return;
-    // Try to publish retained offline if connected
-    if (m_client->state() == QMqttClient::Connected) {
-        m_client->publish(topic, QByteArrayLiteral("offline"), 0, true);
-    }
-}
-
-// Actions persistence and UI
-void MainWindow::loadActions()
-{
-    m_actions.clear();
-    int size = m_settings.beginReadArray("actions");
-    for (int i = 0; i < size; ++i) {
-        m_settings.setArrayIndex(i);
-        UserActionCfg a;
-        a.customName = m_settings.value("name").toString();
-        a.expectedMessage = m_settings.value("message", "PRESS").toString();
-        a.exePath = m_settings.value("exePath").toString();
-        QString typeStr = m_settings.value("type", "Shutdown").toString();
-        ActionType t;
-        if (!ActionsRegistry::fromString(typeStr, t)) t = ActionType::Shutdown;
-        a.type = t;
-        if (!a.customName.isEmpty()) m_actions.push_back(a);
-    }
-    m_settings.endArray();
-    refreshActionsList();
-}
-
-void MainWindow::saveActions()
-{
-    m_settings.beginWriteArray("actions");
-    for (int i = 0; i < m_actions.size(); ++i) {
-        m_settings.setArrayIndex(i);
-        m_settings.setValue("name", m_actions[i].customName);
-        m_settings.setValue("message", m_actions[i].expectedMessage);
-        m_settings.setValue("exePath", m_actions[i].exePath);
-        m_settings.setValue("type", ActionsRegistry::toString(m_actions[i].type));
-    }
-    m_settings.endArray();
-}
-
-void MainWindow::refreshActionsList()
-{
-    if (!ui->listWidgetActions) return;
-    const QSignalBlocker blocker(ui->listWidgetActions);
-    const int previousRow = ui->listWidgetActions->currentRow();
-    ui->listWidgetActions->clear();
-    for (const auto &a : m_actions) {
-        ui->listWidgetActions->addItem(a.customName);
-    }
-    int row = previousRow >= 0 ? previousRow : 0;
-    if (row >= ui->listWidgetActions->count()) row = ui->listWidgetActions->count() - 1;
-    if (row < 0) row = 0;
-    if (ui->listWidgetActions->count() > 0) {
-        ui->listWidgetActions->setCurrentRow(row);
-    }
-    updateActionsFooter();
-}
-
-void MainWindow::updateActionsFooter()
-{
-    if (!ui->listWidgetActions) return;
-    const int row = ui->listWidgetActions->currentRow();
-    if (row >= 0 && row < m_actions.size()) {
-        const auto &a = m_actions[row];
-        const QString username = ui->lineEditUsername->text().trimmed();
-        const QString topic = username.isEmpty()
-            ? QString("mqttpowermanager/%1/").arg("<username>") + a.customName
-            : QString("mqttpowermanager/%1/").arg(username) + a.customName;
-        ui->labelActionsInfo->setText("Expected MQTT message: " + a.expectedMessage +
-            " | Topic: " + topic);
-    } else {
-        ui->labelActionsInfo->setText("Expected MQTT message: ");
-    }
-}
-
-void MainWindow::onActionsContextMenu(const QPoint &pos)
-{
-    if (!ui->listWidgetActions) return;
-    const int row = ui->listWidgetActions->currentRow();
-    if (row < 0 || row >= m_actions.size()) return;
-    const auto &a = m_actions[row];
-
-    QMenu menu(this);
-    QAction *copyTopic = menu.addAction("Copy MQTT topic");
-    QAction *copyPublish = menu.addAction("Copy publish command");
-
-    QAction *chosen = menu.exec(ui->listWidgetActions->viewport()->mapToGlobal(pos));
-    if (!chosen) return;
-
-    const QString username = ui->lineEditUsername->text().trimmed();
-    const QString topic = username.isEmpty()
-        ? QString("mqttpowermanager/%1/").arg("<username>") + a.customName
-        : QString("mqttpowermanager/%1/").arg(username) + a.customName;
-
-    QString textToCopy;
-    if (chosen == copyTopic) {
-        textToCopy = topic;
-    } else if (chosen == copyPublish) {
-        // Generic mosquitto_pub command; user can fill broker/creds if needed
-        textToCopy = QString("mosquitto_pub -h %1 -p %2 -t \"%3\" -m \"%4\"")
-                         .arg(ui->lineEditHost->text().trimmed())
-                         .arg(ui->spinBoxPort->value())
-                         .arg(topic)
-                         .arg(a.expectedMessage);
-    }
-
-    if (!textToCopy.isEmpty()) {
-        QClipboard *clipboard = QApplication::clipboard();
-        clipboard->setText(textToCopy);
-    }
-}
-
- 
-
-// Tray
-void MainWindow::ensureTray()
-{
-    if (m_trayIcon) return;
-    QIcon trayIcon = windowIcon();
-    if (trayIcon.isNull()) trayIcon = QIcon::fromTheme("computer");
-    m_trayIcon = new QSystemTrayIcon(trayIcon, this);
-    m_trayMenu = new QMenu(this);
-    m_trayShowHideAction = m_trayMenu->addAction("Hide");
-    connect(m_trayShowHideAction, &QAction::triggered, this, [this]() {
-        if (isVisible()) {
-            hide();
-        } else {
-            showNormal();
-            raise();
-            activateWindow();
-        }
-        updateTrayShowHideText();
-    });
-    m_trayExitAction = m_trayMenu->addAction("Exit");
-    connect(m_trayExitAction, &QAction::triggered, this, [this]() {
-        qApp->quit();
-    });
-    m_trayIcon->setContextMenu(m_trayMenu);
-    m_trayIcon->setToolTip("MPM");
-    m_trayIcon->setVisible(true);
-    updateTrayShowHideText();
-    updateTrayIconByState();
-}
-
-void MainWindow::updateTrayShowHideText()
-{
-    if (!m_trayShowHideAction) return;
-    m_trayShowHideAction->setText(isVisible() ? "Hide" : "Show");
-}
-
-void MainWindow::updateTrayIconByState()
-{
-    if (!m_trayIcon) return;
-    QIcon icon;
-    switch (m_client->state()) {
-    case QMqttClient::Connected:
-        icon = m_trayIconConnected.isNull() ? windowIcon() : m_trayIconConnected;
-        break;
-    case QMqttClient::Connecting:
-        icon = windowIcon();
-        break;
-    case QMqttClient::Disconnected:
-    default:
-        icon = m_trayIconDisconnected.isNull() ? windowIcon() : m_trayIconDisconnected;
-        break;
-    }
-    m_trayIcon->setIcon(icon);
-}
-
-void MainWindow::onStartMinimizedIfConfigured()
-{
-    if (m_settings.value("options/startMinimized", false).toBool()) {
-        QTimer::singleShot(0, this, [this]() {
-            hide();
-            updateTrayShowHideText();
-        });
-    }
-}
-
-// Windows startup
-void MainWindow::onStartWithWindowsToggled(bool enabled)
-{
-    updateWindowsStartup(enabled);
-    if (ui->checkBoxRemember->isChecked()) {
-        m_settings.setValue("options/startWithWindows", enabled);
-    }
-}
-
-void MainWindow::updateWindowsStartup(bool enabled)
-{
-#ifdef Q_OS_WIN
-    // Use registry Run key
-    QString appName = "MPM";
-    QString appPath = QDir::toNativeSeparators(
-        (ui->checkBoxLockStartupPath->isChecked() && !ui->lineEditStartupPath->text().trimmed().isEmpty())
-            ? ui->lineEditStartupPath->text().trimmed()
-            : QCoreApplication::applicationFilePath());
-    QSettings runKey("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", QSettings::NativeFormat);
-    if (enabled) {
-        runKey.setValue(appName, '"' + appPath + '"');
-    } else {
-        runKey.remove(appName);
-    }
-#else
-    Q_UNUSED(enabled);
-#endif
-}
-
-void MainWindow::onStartupPathLockToggled(bool locked)
-{
-    ui->lineEditStartupPath->setEnabled(locked);
-    ui->pushButtonBrowseStartupPath->setEnabled(locked);
-    saveSettingsIfNeeded();
-    if (ui->checkBoxStartWithWindows->isChecked()) updateWindowsStartup(true);
-}
-
-void MainWindow::onBrowseStartupExe()
-{
-    QString initial = ui->lineEditStartupPath->text().trimmed();
-    if (initial.isEmpty()) initial = QCoreApplication::applicationFilePath();
-    const QString path = QFileDialog::getOpenFileName(this, "Select executable for startup", QFileInfo(initial).absolutePath(),
-                                                      "Executables (*.exe);;All files (*.*)");
-    if (!path.isEmpty()) {
-        ui->lineEditStartupPath->setText(path);
-        saveSettingsIfNeeded();
-        if (ui->checkBoxStartWithWindows->isChecked()) updateWindowsStartup(true);
-    }
-}
-
-void MainWindow::onCreateStartMenuShortcut()
-{
-#ifdef Q_OS_WIN
-    // Resolve target path based on lock setting
-    const QString targetPath = (ui->checkBoxLockStartupPath->isChecked() && !ui->lineEditStartupPath->text().trimmed().isEmpty())
-                                   ? ui->lineEditStartupPath->text().trimmed()
-                                   : QCoreApplication::applicationFilePath();
-    const QString nativeTarget = QDir::toNativeSeparators(targetPath);
-
-    const QString appsDir = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation);
-    if (appsDir.isEmpty()) {
-        QMessageBox::warning(this, "Start Menu", "Cannot resolve Start Menu folder.");
-        return;
-    }
-    const QString mpmDir = QDir(appsDir).filePath("MPM");
-    QDir().mkpath(mpmDir);
-    const QString linkPath = QDir(mpmDir).filePath("MPM.lnk");
-
-    HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    const bool shouldUninit = SUCCEEDED(hr);
-    IShellLinkW *psl = nullptr;
-    HRESULT hrc = CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, reinterpret_cast<void **>(&psl));
-    if (SUCCEEDED(hrc) && psl) {
-        psl->SetPath((LPCWSTR)nativeTarget.utf16());
-        const QString workDir = QFileInfo(nativeTarget).absolutePath();
-        psl->SetWorkingDirectory((LPCWSTR)workDir.utf16());
-        psl->SetDescription(L"MPM");
-        IPersistFile *ppf = nullptr;
-        if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, reinterpret_cast<void **>(&ppf))) && ppf) {
-            const std::wstring wlink = linkPath.toStdWString();
-            if (SUCCEEDED(ppf->Save(wlink.c_str(), TRUE))) {
-                QMessageBox::information(this, "Start Menu", "Shortcut created in Start Menu.");
-            } else {
-                QMessageBox::warning(this, "Start Menu", "Failed to save shortcut.");
-            }
-            ppf->Release();
-        } else {
-            QMessageBox::warning(this, "Start Menu", "Failed to access IPersistFile.");
-        }
-        psl->Release();
-    } else {
-        QMessageBox::warning(this, "Start Menu", "Failed to create IShellLink.");
-    }
-    if (shouldUninit) CoUninitialize();
-#else
-    QMessageBox::information(this, "Start Menu", "This feature is only available on Windows.");
-#endif
-}
-
-// Optional: handle close to tray
-void MainWindow::closeEvent(QCloseEvent *event)
-{
-    if (m_trayIcon && m_trayIcon->isVisible()) {
-        hide();
-        updateTrayShowHideText();
-        event->ignore();
-        return;
-    }
-    QMainWindow::closeEvent(event);
-}
-
-void MainWindow::updateConnectButton()
-{
-    switch (m_client->state()) {
-    case QMqttClient::Disconnected:
-        if (m_reconnectTimer.isActive()) {
-            ui->pushButtonConnect->setText("Connecting...");
-            ui->pushButtonConnect->setToolTip("Click to cancel auto-reconnect");
-        } else {
-            ui->pushButtonConnect->setText("Connect");
-            ui->pushButtonConnect->setToolTip("");
-        }
-        break;
-    case QMqttClient::Connecting:
-        ui->pushButtonConnect->setText("Connecting...");
-        ui->pushButtonConnect->setToolTip("");
-        break;
-    case QMqttClient::Connected:
-        ui->pushButtonConnect->setText("Disconnect");
-        ui->pushButtonConnect->setToolTip("");
-        break;
-    }
-}
