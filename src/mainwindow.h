@@ -61,6 +61,9 @@ private:
     bool m_prevServiceLocal = false;
     int m_preferredIpc = 0; // 0=auto,1=local,2=tcp
     int m_serviceMissCount = 0; // consecutive missed status polls
+    QTimer *m_servicePollTimer = nullptr;
+    void startServicePolling(); // mirror service status and logs into the GUI
+    void handOverToService();   // stop the GUI MQTT client and control the service instead
 
     // MQTT
     QString getSubscribeTopic() const; // mqttpowermanager/%1/+

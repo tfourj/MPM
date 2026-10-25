@@ -139,76 +139,7 @@ MainWindow::MainWindow(QWidget *parent)
         if (ui->labelConnSource) ui->labelConnSource->setText(srcText);
         log(QString("IPC transport: Local"));
         // Mirror service status into GUI periodically
-        QTimer *poll = new QTimer(this);
-        poll->setInterval(1000);
-        connect(poll, &QTimer::timeout, this, [this]() {
-            // Reflect current transport by the last used sender path
-            // Try to query service every tick; if it fails repeatedly, UI will reflect via miss counter below
-            QByteArray resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status2"), QStringLiteral("MPMServiceIpc"), 200);
-            if (resp.isEmpty()) {
-                resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status"), QStringLiteral("MPMServiceIpc"), 200);
-            }
-            if (!resp.isEmpty()) {
-                m_serviceMissCount = 0;
-                bool ok = false;
-                QMqttClient::ClientState rawState = QMqttClient::Disconnected;
-                bool recoActive = false;
-                bool userDisc = false;
-                const QString s = QString::fromUtf8(resp);
-                const QStringList parts = s.split(',');
-                if (parts.size() >= 1) {
-                    int v = parts[0].toInt(&ok);
-                    if (ok) rawState = static_cast<QMqttClient::ClientState>(v);
-                }
-                if (parts.size() >= 2) {
-                    recoActive = (parts[1].trimmed() == QLatin1String("1"));
-                }
-                if (parts.size() >= 4) {
-                    userDisc = (parts[3].trimmed() == QLatin1String("1"));
-                }
-                // Fallback when only simple status returned
-                m_serviceState = rawState;
-                m_serviceReconnectActive = recoActive;
-                m_serviceUserInitiated = userDisc;
-
-                // Compute effective state for UI: show Connecting when auto-reconnect loop is active
-                QMqttClient::ClientState effectiveState = m_serviceState;
-                if (m_serviceState == QMqttClient::Disconnected && m_serviceReconnectActive && !m_serviceUserInitiated) {
-                    effectiveState = QMqttClient::Connecting;
-                }
-
-                if (true) {
-                    updateStatusLabel(effectiveState);
-                    updateTrayIconByState();
-                    if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Local)");
-                    if (ui && ui->pushButtonConnect) {
-                        switch (effectiveState) {
-                        case QMqttClient::Connected: ui->pushButtonConnect->setText("Disconnect"); break;
-                        case QMqttClient::Connecting: ui->pushButtonConnect->setText("Connecting.."); break;
-                        case QMqttClient::Disconnected: default: ui->pushButtonConnect->setText("Connect"); break;
-                        }
-                    }
-                }
-            } else {
-                // Missed status response
-                m_serviceMissCount = qMin(m_serviceMissCount + 1, 10);
-                if (m_serviceMissCount >= 3) {
-                    if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Unavailable)");
-                    updateStatusLabel(QMqttClient::Disconnected);
-                    updateTrayIconByState();
-                    if (ui && ui->pushButtonConnect) ui->pushButtonConnect->setText("Connect");
-                }
-            }
-            static int tick = 0; tick = (tick + 1) % 3;
-            if (tick == 0) {
-                const QByteArray logs = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("getlogs"), QStringLiteral("MPMServiceIpc"), 200);
-                if (!logs.isEmpty()) {
-                    const QString s = QString::fromUtf8(logs);
-                    if (!s.trimmed().isEmpty()) ui->textEditLog->append(s.trimmed());
-                }
-            }
-        });
-        poll->start();
+        startServicePolling();
         // If user forces service-only but service isn't available, avoid lag: disable connect
         if (serviceOnly && !serviceAvailable && ui && ui->pushButtonConnect) {
             ui->pushButtonConnect->setEnabled(false);
@@ -219,6 +150,11 @@ MainWindow::MainWindow(QWidget *parent)
     QTimer *svcAvailPoll = new QTimer(this);
     svcAvailPoll->setInterval(1000);
     connect(svcAvailPoll, &QTimer::timeout, this, [this]() {
+        // A running service owns the MQTT connection; hand over as soon as it becomes reachable
+        if (!m_isControllingService) {
+            if (ServiceIpcClient::isAvailableLocal()) handOverToService();
+            return;
+        }
         const int lt = ServiceIpcClient::lastTransport();
         const bool local = (lt == 1) ? true : ServiceIpcClient::isAvailableLocal();
         if (ui && ui->checkBoxServiceUseOnly && ui->checkBoxServiceUseOnly->isChecked()) {
@@ -329,8 +265,8 @@ MainWindow::MainWindow(QWidget *parent)
         connect(ui->checkBoxServiceUseOnly, &QCheckBox::toggled, this, [this](bool on){
             m_settings.setValue("service/useOnly", on);
             if (on) {
-                m_isControllingService = true;
                 log("Service-only mode enabled: GUI MQTT disabled");
+                handOverToService();
                 // Disable GUI connect if service not available to prevent lag
                 if (!ServiceIpcClient::isAvailable() && ui && ui->pushButtonConnect) {
                     ui->pushButtonConnect->setEnabled(false);
@@ -351,6 +287,101 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::startServicePolling()
+{
+    if (m_servicePollTimer) return;
+    m_servicePollTimer = new QTimer(this);
+    m_servicePollTimer->setInterval(1000);
+    connect(m_servicePollTimer, &QTimer::timeout, this, [this]() {
+        // Reflect current transport by the last used sender path
+        // Try to query service every tick; if it fails repeatedly, UI will reflect via miss counter below
+        QByteArray resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status2"), QStringLiteral("MPMServiceIpc"), 200);
+        if (resp.isEmpty()) {
+            resp = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("status"), QStringLiteral("MPMServiceIpc"), 200);
+        }
+        if (!resp.isEmpty()) {
+            m_serviceMissCount = 0;
+            bool ok = false;
+            QMqttClient::ClientState rawState = QMqttClient::Disconnected;
+            bool recoActive = false;
+            bool userDisc = false;
+            const QString s = QString::fromUtf8(resp);
+            const QStringList parts = s.split(',');
+            if (parts.size() >= 1) {
+                int v = parts[0].toInt(&ok);
+                if (ok) rawState = static_cast<QMqttClient::ClientState>(v);
+            }
+            if (parts.size() >= 2) {
+                recoActive = (parts[1].trimmed() == QLatin1String("1"));
+            }
+            if (parts.size() >= 4) {
+                userDisc = (parts[3].trimmed() == QLatin1String("1"));
+            }
+            // Fallback when only simple status returned
+            m_serviceState = rawState;
+            m_serviceReconnectActive = recoActive;
+            m_serviceUserInitiated = userDisc;
+
+            // Compute effective state for UI: show Connecting when auto-reconnect loop is active
+            QMqttClient::ClientState effectiveState = m_serviceState;
+            if (m_serviceState == QMqttClient::Disconnected && m_serviceReconnectActive && !m_serviceUserInitiated) {
+                effectiveState = QMqttClient::Connecting;
+            }
+
+            if (true) {
+                updateStatusLabel(effectiveState);
+                updateTrayIconByState();
+                if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Local)");
+                if (ui && ui->pushButtonConnect) {
+                    switch (effectiveState) {
+                    case QMqttClient::Connected: ui->pushButtonConnect->setText("Disconnect"); break;
+                    case QMqttClient::Connecting: ui->pushButtonConnect->setText("Connecting.."); break;
+                    case QMqttClient::Disconnected: default: ui->pushButtonConnect->setText("Connect"); break;
+                    }
+                }
+            }
+        } else {
+            // Missed status response
+            m_serviceMissCount = qMin(m_serviceMissCount + 1, 10);
+            if (m_serviceMissCount >= 3) {
+                if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Unavailable)");
+                updateStatusLabel(QMqttClient::Disconnected);
+                updateTrayIconByState();
+                if (ui && ui->pushButtonConnect) ui->pushButtonConnect->setText("Connect");
+            }
+        }
+        static int tick = 0; tick = (tick + 1) % 3;
+        if (tick == 0) {
+            const QByteArray logs = ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("getlogs"), QStringLiteral("MPMServiceIpc"), 200);
+            if (!logs.isEmpty()) {
+                const QString s = QString::fromUtf8(logs);
+                if (!s.trimmed().isEmpty()) ui->textEditLog->append(s.trimmed());
+            }
+        }
+    });
+    m_servicePollTimer->start();
+}
+
+void MainWindow::handOverToService()
+{
+    // Only one MQTT connection may run, otherwise every action executes twice
+    const bool guiWasActive = m_client->state() != QMqttClient::Disconnected || m_reconnectTimer.isActive();
+    if (guiWasActive) {
+        log("Service detected: closing GUI MQTT connection, service takes over");
+        m_connectTimeoutTimer.stop();
+        m_reconnectTimer.stop();
+        m_userInitiatedDisconnect = true;
+        // No offline publish: the service shares the health topic and reports its own availability
+        m_client->disconnectFromHost();
+    }
+    m_isControllingService = true;
+    if (ui->labelConnSource) ui->labelConnSource->setText("Source: Service (Local)");
+    startServicePolling();
+    if (guiWasActive) {
+        ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("connect"), QStringLiteral("MPMServiceIpc"), 200);
+    }
 }
 
 void MainWindow::log(const QString &msg)
