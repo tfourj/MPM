@@ -37,6 +37,8 @@ set(PROJECT_SOURCES
         src/common/ipc_auth.h
         src/common/ha_discovery.cpp
         src/common/ha_discovery.h
+        src/common/pc_state.cpp
+        src/common/pc_state.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -126,6 +128,8 @@ if (WIN32)
         src/common/ipc_auth.h
         src/common/ha_discovery.cpp
         src/common/ha_discovery.h
+        src/common/pc_state.cpp
+        src/common/pc_state.h
         src/actions/actions.cpp
         src/actions/actions.h
     )
