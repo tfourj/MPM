@@ -80,6 +80,7 @@ private:
 	bool m_applyAndReconnect = false; // reload changed params while connected
 	bool m_printOnly = false;
 	bool m_haDiscovery = false; // publish actions to Home Assistant automatically
+	QString m_haDeviceName;     // custom Home Assistant device name, empty for the default
 };
 
 

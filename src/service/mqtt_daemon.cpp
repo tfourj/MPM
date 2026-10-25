@@ -119,6 +119,7 @@ void MqttDaemon::loadSettings(QSettings *source)
 	m_reconnectSec = qMax(1, S.value("options/reconnectSec", 5).toInt());
 	m_printOnly = S.value("options/printOnly", false).toBool();
 	m_haDiscovery = S.value("homeassistant/discovery", false).toBool();
+	m_haDeviceName = S.value("homeassistant/deviceName").toString().trimmed();
 	loadActions(&S);
 }
 
@@ -184,7 +185,7 @@ bool MqttDaemon::publishHaDiscovery()
 	QVector<HaDiscovery::Entry> entries;
 	for (const UserActionCfg &a : m_actions) entries.push_back({a.customName, a.type, a.expectedMessage});
 	QSettings s(mpmSharedSettingsFilePath(), QSettings::IniFormat);
-	const bool ok = HaDiscovery::publish(m_client, m_username, QString(), entries, s);
+	const bool ok = HaDiscovery::publish(m_client, m_username, m_haDeviceName, entries, s);
 	if (ok) qInfo() << "Home Assistant discovery published for" << entries.size() << "actions";
 	else qWarning() << "Home Assistant discovery not published (not connected or username empty)";
 	return ok;
