@@ -243,17 +243,18 @@
            </widget>
           </item>
           <item>
-           <spacer name="horizontalSpacerHomeAssistant">
-            <property name="orientation">
-             <enum>Qt::Orientation::Horizontal</enum>
+           <widget class="QLabel" name="labelHaDeviceName">
+            <property name="text">
+             <string>Device name:</string>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="lineEditHaDeviceName">
+            <property name="toolTip">
+             <string>Name of the MPM device in Home Assistant, leave empty for the default</string>
             </property>
-           </spacer>
+           </widget>
           </item>
           <item>
            <widget class="QPushButton" name="pushButtonHaSync">
