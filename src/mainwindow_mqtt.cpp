@@ -85,8 +85,8 @@ bool MainWindow::publishHaDiscovery()
 {
     QVector<HaDiscovery::Entry> entries;
     for (const UserActionCfg &a : m_actions) entries.push_back({a.customName, a.type, a.expectedMessage});
-    const bool ok = HaDiscovery::publish(m_client, ui->lineEditUsername->text().trimmed(), QString(), entries,
-                                        m_settings);
+    const bool ok = HaDiscovery::publish(m_client, ui->lineEditUsername->text().trimmed(),
+                                        ui->lineEditHaDeviceName->text().trimmed(), entries, m_settings);
     if (ok) log(QString("Home Assistant discovery published for %1 actions").arg(entries.size()));
     return ok;
 }
@@ -124,6 +124,20 @@ void MainWindow::onHaDiscoveryToggled(bool enabled)
     } else if (HaDiscovery::clear(m_client, m_settings)) {
         log("Home Assistant discovery removed");
     }
+}
+
+void MainWindow::onHaDeviceNameEdited()
+{
+    // editingFinished also fires when focus leaves without a change
+    if (ui->lineEditHaDeviceName->text().trimmed() == m_settings.value("homeassistant/deviceName").toString()) return;
+    saveAllSettingsForce();
+    if (m_isControllingService) {
+        // The service republishes discovery with the new name on reload
+        ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("reload-settings"),
+                                        QStringLiteral("MPMServiceIpc"), 200);
+        return;
+    }
+    if (ui->checkBoxHaDiscovery->isChecked()) publishHaDiscovery();
 }
 
 void MainWindow::onHaSyncClicked()
@@ -306,6 +320,7 @@ void MainWindow::loadSettings()
     }
     ui->checkBoxPrintOnly->setChecked(m_settings.value("options/printOnly", false).toBool());
     ui->checkBoxHaDiscovery->setChecked(m_settings.value("homeassistant/discovery", false).toBool());
+    ui->lineEditHaDeviceName->setText(m_settings.value("homeassistant/deviceName").toString());
     ui->spinBoxTimeoutSec->setValue(m_settings.value("options/timeoutSec", 5).toInt());
     ui->checkBoxStartWithWindows->setChecked(m_settings.value("options/startWithWindows", false).toBool());
     ui->checkBoxAutoConnect->setChecked(m_settings.value("options/autoConnect", false).toBool());
@@ -349,6 +364,7 @@ void MainWindow::saveAllSettingsForce()
     // Options
     m_settings.setValue("options/printOnly", ui->checkBoxPrintOnly->isChecked());
     m_settings.setValue("homeassistant/discovery", ui->checkBoxHaDiscovery->isChecked());
+    m_settings.setValue("homeassistant/deviceName", ui->lineEditHaDeviceName->text().trimmed());
     m_settings.setValue("options/timeoutSec", ui->spinBoxTimeoutSec->value());
     m_settings.setValue("options/autoConnect", ui->checkBoxAutoConnect->isChecked());
     m_settings.setValue("options/autoReconnect", ui->checkBoxAutoReconnect->isChecked());

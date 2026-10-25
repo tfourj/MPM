@@ -79,6 +79,7 @@ private:
     void onHaStatusReceived(const QMqttMessage &message);
     void onHaDiscoveryToggled(bool enabled);
     void onHaSyncClicked();
+    void onHaDeviceNameEdited();
 
     void loadSettings();
     void saveSettingsIfNeeded();

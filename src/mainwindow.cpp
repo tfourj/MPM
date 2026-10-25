@@ -24,6 +24,7 @@
 #include "common/settings.h"
 #include "common/service_ipc_client.h"
 #include "common/crypto_win.h"
+#include "common/ha_discovery.h"
 #include <QSystemTrayIcon>
 #include <QAction>
 #include <QComboBox>
@@ -113,6 +114,15 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui->pushButtonCreateStartMenuShortcut, &QPushButton::clicked, this, &MainWindow::onCreateStartMenuShortcut);
     connect(ui->checkBoxHaDiscovery, &QCheckBox::toggled, this, &MainWindow::onHaDiscoveryToggled);
     connect(ui->pushButtonHaSync, &QPushButton::clicked, this, &MainWindow::onHaSyncClicked);
+    connect(ui->lineEditHaDeviceName, &QLineEdit::editingFinished, this, &MainWindow::onHaDeviceNameEdited);
+    // Show the default Home Assistant device name while no custom one is set
+    auto updateHaDevicePlaceholder = [this]() {
+        const QString user = ui->lineEditUsername->text().trimmed();
+        const QString shownUser = user.isEmpty() ? QStringLiteral("<username>") : user;
+        ui->lineEditHaDeviceName->setPlaceholderText(HaDiscovery::defaultDeviceName(shownUser));
+    };
+    updateHaDevicePlaceholder();
+    connect(ui->lineEditUsername, &QLineEdit::textChanged, this, updateHaDevicePlaceholder);
     loadActions();
     applyUiToClient();
     updateConnectButton();
