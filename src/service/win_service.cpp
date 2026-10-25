@@ -211,7 +211,7 @@ void WINAPI MpmWinService::ServiceMain(DWORD, LPWSTR*)
         QCoreApplication app(qtArgc, qtArgv);
         initializeFileLogger("C:/ProgramData/MPM/MPMService.log", true);
         enableInMemoryLogCapture(500);
-        qInfo() << "MPMService started (v1.0.0)";
+        qInfo() << "MPMService started (v" APP_VERSION ")";
         MqttDaemon daemon;
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &daemon, [&daemon](){ daemon.notifyGoingOffline(); });
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &daemon, [&daemon](){ daemon.notifyGoingOffline(); });
