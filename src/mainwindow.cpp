@@ -111,6 +111,8 @@ MainWindow::MainWindow(QWidget *parent)
         if (ui->checkBoxStartWithWindows->isChecked()) updateWindowsStartup(true);
     });
     connect(ui->pushButtonCreateStartMenuShortcut, &QPushButton::clicked, this, &MainWindow::onCreateStartMenuShortcut);
+    connect(ui->checkBoxHaDiscovery, &QCheckBox::toggled, this, &MainWindow::onHaDiscoveryToggled);
+    connect(ui->pushButtonHaSync, &QPushButton::clicked, this, &MainWindow::onHaSyncClicked);
     loadActions();
     applyUiToClient();
     updateConnectButton();

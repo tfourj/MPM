@@ -5,6 +5,7 @@
 #include <QApplication>
 #include "common/service_ipc_client.h"
 #include "common/crypto_win.h"
+#include "common/ha_discovery.h"
 #include <QSettings>
 
 void MainWindow::onConnectClicked()
@@ -74,6 +75,66 @@ void MainWindow::onConnected()
     }
 
     publishAvailabilityOnline();
+    if (ui->checkBoxHaDiscovery->isChecked()) {
+        subscribeHaStatus();
+        publishHaDiscovery();
+    }
+}
+
+bool MainWindow::publishHaDiscovery()
+{
+    QVector<HaDiscovery::Entry> entries;
+    for (const UserActionCfg &a : m_actions) entries.push_back({a.customName, a.type, a.expectedMessage});
+    const bool ok = HaDiscovery::publish(m_client, ui->lineEditUsername->text().trimmed(), entries, m_settings);
+    if (ok) log(QString("Home Assistant discovery published for %1 actions").arg(entries.size()));
+    return ok;
+}
+
+void MainWindow::subscribeHaStatus()
+{
+    if (m_client->state() != QMqttClient::Connected) return;
+    QMqttSubscription *sub = m_client->subscribe(HaDiscovery::statusTopic(), 0);
+    if (sub) {
+        connect(sub, &QMqttSubscription::messageReceived, this, &MainWindow::onHaStatusReceived,
+                Qt::UniqueConnection);
+    }
+}
+
+void MainWindow::onHaStatusReceived(const QMqttMessage &message)
+{
+    // Home Assistant sends "online" after it restarts; a retained one was already covered by onConnected
+    if (!ui->checkBoxHaDiscovery->isChecked() || message.retain() || message.payload() != "online") return;
+    log("Home Assistant came online; republishing discovery");
+    publishHaDiscovery();
+}
+
+void MainWindow::onHaDiscoveryToggled(bool enabled)
+{
+    saveAllSettingsForce();
+    if (m_isControllingService) {
+        // The service applies it on reload: publishes when enabled, removes the entities when disabled
+        ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("reload-settings"),
+                                        QStringLiteral("MPMServiceIpc"), 200);
+        return;
+    }
+    if (enabled) {
+        subscribeHaStatus();
+        publishHaDiscovery();
+    } else if (HaDiscovery::clear(m_client, m_settings)) {
+        log("Home Assistant discovery removed");
+    }
+}
+
+void MainWindow::onHaSyncClicked()
+{
+    saveAllSettingsForce();
+    if (m_isControllingService) {
+        const QByteArray r = ServiceIpcClient::send("ha-sync");
+        log(r == "ok" ? "Service: Home Assistant discovery published"
+                      : "Service: Home Assistant sync failed, service is not connected");
+        return;
+    }
+    if (!publishHaDiscovery()) log("Connect to the MQTT broker first to sync with Home Assistant");
 }
 
 void MainWindow::onStateChanged(QMqttClient::ClientState state)
@@ -243,6 +304,7 @@ void MainWindow::loadSettings()
         }
     }
     ui->checkBoxPrintOnly->setChecked(m_settings.value("options/printOnly", false).toBool());
+    ui->checkBoxHaDiscovery->setChecked(m_settings.value("homeassistant/discovery", false).toBool());
     ui->spinBoxTimeoutSec->setValue(m_settings.value("options/timeoutSec", 5).toInt());
     ui->checkBoxStartWithWindows->setChecked(m_settings.value("options/startWithWindows", false).toBool());
     ui->checkBoxAutoConnect->setChecked(m_settings.value("options/autoConnect", false).toBool());
@@ -285,6 +347,7 @@ void MainWindow::saveAllSettingsForce()
     }
     // Options
     m_settings.setValue("options/printOnly", ui->checkBoxPrintOnly->isChecked());
+    m_settings.setValue("homeassistant/discovery", ui->checkBoxHaDiscovery->isChecked());
     m_settings.setValue("options/timeoutSec", ui->spinBoxTimeoutSec->value());
     m_settings.setValue("options/autoConnect", ui->checkBoxAutoConnect->isChecked());
     m_settings.setValue("options/autoReconnect", ui->checkBoxAutoReconnect->isChecked());

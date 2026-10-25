@@ -73,6 +73,13 @@ private:
     void publishAvailabilityOnline();
     void publishAvailabilityOffline();
 
+    // Home Assistant discovery
+    bool publishHaDiscovery();
+    void subscribeHaStatus();
+    void onHaStatusReceived(const QMqttMessage &message);
+    void onHaDiscoveryToggled(bool enabled);
+    void onHaSyncClicked();
+
     void loadSettings();
     void saveSettingsIfNeeded();
     void applyUiToClient();

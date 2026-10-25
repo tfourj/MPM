@@ -47,7 +47,10 @@ void MainWindow::onActionsChanged()
     // The service reads actions from the shared INI, so it needs a reload to pick up changes
     if (m_isControllingService) {
         m_settings.sync();
-        ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("reload-settings"), QStringLiteral("MPMServiceIpc"), 200);
+        ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("reload-settings"),
+                                        QStringLiteral("MPMServiceIpc"), 200);
+    } else if (ui->checkBoxHaDiscovery->isChecked()) {
+        publishHaDiscovery();
     }
 }
 
