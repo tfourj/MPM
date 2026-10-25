@@ -84,3 +84,6 @@ CMakeLists.txt.user*
 /.vscode
 /CMakeFiles
 *.rar
+
+# Installer build output
+installer/temp_installer/
