@@ -31,6 +31,8 @@ public:
 	}
 	void reloadSettings();
 	void notifyGoingOffline();
+	// Reloads settings and publishes Home Assistant discovery now; false when not connected
+	bool syncHaDiscovery();
 
 	// Extended status helpers
 	bool isReconnectActive() const { return m_reconnectTimer && m_reconnectTimer->isActive(); }
@@ -42,6 +44,7 @@ private slots:
 	void onMessageReceived(const QMqttMessage &message);
 	void onStateChanged(QMqttClient::ClientState state);
 	void onErrorChanged(QMqttClient::ClientError error);
+	void onHaStatusReceived(const QMqttMessage &message);
 
 private:
 	void loadSettings(QSettings *source = nullptr);
@@ -50,6 +53,8 @@ private:
 	QString availabilityTopic() const;
 	void publishAvailabilityOnline();
 	void publishAvailabilityOffline();
+	void subscribeHaStatus();
+	bool publishHaDiscovery();
 
 	struct UserActionCfg {
 		QString customName;
@@ -74,6 +79,7 @@ private:
 	bool m_userInitiatedDisconnect = false;
 	bool m_applyAndReconnect = false; // reload changed params while connected
 	bool m_printOnly = false;
+	bool m_haDiscovery = false; // publish actions to Home Assistant automatically
 };
 
 

@@ -1,6 +1,7 @@
 #include "mqtt_daemon.h"
 #include "../common/settings.h"
 #include "../common/crypto_win.h"
+#include "../common/ha_discovery.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -50,6 +51,7 @@ void MqttDaemon::reloadSettings()
 	const QString oldUser = m_mqttUser;
 	const QString oldPass = m_mqttPassword;
 	const bool oldAutoReconnect = m_autoReconnect;
+	const bool oldHaDiscovery = m_haDiscovery;
 	// Fresh QSettings to force reread
 	QSettings fresh(mpmSharedSettingsFilePath(), QSettings::IniFormat);
 	loadSettings(&fresh);
@@ -75,6 +77,24 @@ void MqttDaemon::reloadSettings()
 	if (!oldAutoReconnect && m_autoReconnect && m_client->state() == QMqttClient::Disconnected && !m_userInitiatedDisconnect) {
 		m_reconnectTimer->start();
 	}
+	// Keep Home Assistant in sync with the reloaded actions
+	if (m_client->state() == QMqttClient::Connected) {
+		if (m_haDiscovery) {
+			subscribeHaStatus();
+			publishHaDiscovery();
+		} else if (oldHaDiscovery) {
+			QSettings s(mpmSharedSettingsFilePath(), QSettings::IniFormat);
+			if (HaDiscovery::clear(m_client, s)) qInfo() << "Home Assistant discovery removed";
+		}
+	}
+}
+
+bool MqttDaemon::syncHaDiscovery()
+{
+	reloadSettings();
+	if (m_client->state() != QMqttClient::Connected) return false;
+	// reloadSettings already republished when automatic discovery is on
+	return m_haDiscovery || publishHaDiscovery();
 }
 
 void MqttDaemon::loadSettings(QSettings *source)
@@ -98,6 +118,7 @@ void MqttDaemon::loadSettings(QSettings *source)
 	m_autoReconnect = S.value("options/autoReconnect", false).toBool();
 	m_reconnectSec = qMax(1, S.value("options/reconnectSec", 5).toInt());
 	m_printOnly = S.value("options/printOnly", false).toBool();
+	m_haDiscovery = S.value("homeassistant/discovery", false).toBool();
 	loadActions(&S);
 }
 
@@ -146,6 +167,35 @@ void MqttDaemon::onConnected()
 		m_client->publish(availabilityTopic(), QByteArrayLiteral("online"), 0, true);
 	}
 	m_userInitiatedDisconnect = false;
+	if (m_haDiscovery) {
+		subscribeHaStatus();
+		publishHaDiscovery();
+	}
+}
+
+void MqttDaemon::subscribeHaStatus()
+{
+	QMqttSubscription *sub = m_client->subscribe(HaDiscovery::statusTopic(), 0);
+	if (sub) connect(sub, &QMqttSubscription::messageReceived, this, &MqttDaemon::onHaStatusReceived, Qt::UniqueConnection);
+}
+
+bool MqttDaemon::publishHaDiscovery()
+{
+	QVector<HaDiscovery::Entry> entries;
+	for (const UserActionCfg &a : m_actions) entries.push_back({a.customName, a.type, a.expectedMessage});
+	QSettings s(mpmSharedSettingsFilePath(), QSettings::IniFormat);
+	const bool ok = HaDiscovery::publish(m_client, m_username, entries, s);
+	if (ok) qInfo() << "Home Assistant discovery published for" << entries.size() << "actions";
+	else qWarning() << "Home Assistant discovery not published (not connected or username empty)";
+	return ok;
+}
+
+void MqttDaemon::onHaStatusReceived(const QMqttMessage &message)
+{
+	// Home Assistant sends "online" after it restarts; a retained one was already covered by onConnected
+	if (!m_haDiscovery || message.retain() || message.payload() != "online") return;
+	qInfo() << "Home Assistant came online; republishing discovery";
+	publishHaDiscovery();
 }
 
 void MqttDaemon::onStateChanged(QMqttClient::ClientState state)

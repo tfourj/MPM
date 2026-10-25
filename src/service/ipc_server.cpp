@@ -77,6 +77,9 @@ void IpcServer::handleSocket(QLocalSocket *sock)
             // best-effort via reloadSettings flipping flag; handled in daemon
         }
         resp = "ok";
+    } else if (cmd == "ha-sync") {
+        // Publish Home Assistant discovery now, also when automatic discovery is off
+        resp = (m_daemon && m_daemon->syncHaDiscovery()) ? "ok" : "offline";
     } else if (cmd == "shutdown-service") {
         // Request the service process to exit
         QCoreApplication::quit();
