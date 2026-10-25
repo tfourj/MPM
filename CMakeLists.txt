@@ -104,33 +104,6 @@ if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(MPM)
 endif()
 
-if(WIN32 AND NOT STATIC_BUILD)
-    if(CMAKE_BUILD_TYPE STREQUAL "Release")
-        get_target_property(_qt_bin_dir Qt${QT_VERSION_MAJOR}::qmake IMPORTED_LOCATION)
-        get_filename_component(_qt_bin_dir "${_qt_bin_dir}" DIRECTORY)
-
-        set(_deploy_dir $<TARGET_FILE_DIR:MPM>)
-
-        add_custom_command(TARGET MPM POST_BUILD
-            COMMAND "${_qt_bin_dir}/windeployqt.exe"
-                --no-translations
-                --no-system-d3d-compiler
-                --no-opengl-sw
-                --no-quick-import
-                --no-virtualkeyboard
-                --no-3dcore
-                "$<TARGET_FILE:MPM>"
-            COMMENT "Deploying only core Qt DLLs with windeployqt..."
-        )
-
-        add_custom_command(TARGET MPM POST_BUILD
-            COMMAND cmd /C "cd /D \"${CMAKE_SOURCE_DIR}\" && echo Checking for user_post_deploy.bat in: %CD% && if exist \"user_post_deploy.bat\" call \"user_post_deploy.bat\" \"${_deploy_dir}\""
-            COMMENT "Running user_post_deploy.bat from project root if it exists..."
-        )
-
-    endif()
-endif()
-
 # Windows Service target
 if (WIN32)
     add_executable(MPMService
@@ -160,4 +133,39 @@ if (WIN32)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
         WIN32_EXECUTABLE FALSE
     )
+endif()
+
+# Deploy Qt runtime and build the installer (Release only)
+if(WIN32 AND NOT STATIC_BUILD)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release")
+        get_target_property(_qt_bin_dir Qt${QT_VERSION_MAJOR}::qmake IMPORTED_LOCATION)
+        get_filename_component(_qt_bin_dir "${_qt_bin_dir}" DIRECTORY)
+
+        set(_deploy_dir $<SHELL_PATH:$<TARGET_FILE_DIR:MPM>>)
+
+        # The installer packages both executables, so build the service first
+        add_dependencies(MPM MPMService)
+
+        add_custom_command(TARGET MPM POST_BUILD
+            COMMAND "${_qt_bin_dir}/windeployqt.exe"
+                --no-translations
+                --no-system-d3d-compiler
+                --no-opengl-sw
+                --no-quick-import
+                --no-virtualkeyboard
+                --no-3dcore
+                "$<TARGET_FILE:MPM>"
+            COMMENT "Deploying only core Qt DLLs with windeployqt..."
+        )
+
+        # Creates the ZIP and the NSIS installer next to the deploy directory
+        set(_post_deploy_script "${CMAKE_SOURCE_DIR}/installer/user_post_deploy.bat")
+        if(EXISTS "${_post_deploy_script}")
+            add_custom_command(TARGET MPM POST_BUILD
+                COMMAND "$<SHELL_PATH:${_post_deploy_script}>" "${_deploy_dir}" "${PROJECT_VERSION}"
+                COMMENT "Creating ZIP and installer with installer/user_post_deploy.bat..."
+            )
+        endif()
+
+    endif()
 endif()
