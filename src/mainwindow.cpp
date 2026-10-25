@@ -280,16 +280,11 @@ MainWindow::MainWindow(QWidget *parent)
         publishAvailabilityOffline();
     });
 
-    // On OS logout/shutdown or session end, optionally stop the service
+    // On OS logout/shutdown or session end, optionally stop the service.
+    // Never prompt here: a dialog during session end blocks shutdowns triggered remotely over MQTT.
     connect(qApp, &QGuiApplication::commitDataRequest, this, [this](QSessionManager &){
-        if (m_isControllingService) {
-            if (m_stopPromptMode == 1) {
-                stopService();
-            } else if (m_stopPromptMode == 2) {
-                if (QMessageBox::question(this, "Stop Service", "Do you want to stop the MPM service as well?") == QMessageBox::Yes) {
-                    stopService();
-                }
-            }
+        if (m_isControllingService && m_stopPromptMode == 1) {
+            stopService();
         }
     });
 
