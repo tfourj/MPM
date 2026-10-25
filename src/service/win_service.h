@@ -18,7 +18,7 @@ public:
 
 private:
 	static void WINAPI ServiceMain(DWORD argc, LPWSTR *argv);
-	static void WINAPI ServiceCtrlHandler(DWORD controlCode);
+	static DWORD WINAPI ServiceCtrlHandler(DWORD controlCode, DWORD eventType, LPVOID eventData, LPVOID context);
 	static void setStatus(DWORD currentState, DWORD win32ExitCode = NO_ERROR, DWORD waitHintMs = 0);
 	static SERVICE_STATUS_HANDLE s_statusHandle;
 	static SERVICE_STATUS s_status;

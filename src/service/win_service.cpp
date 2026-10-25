@@ -6,6 +6,7 @@
 #include "../common/logging.h"
 #include "ipc_server.h"
 #include <Aclapi.h>
+#include <mutex>
 #include <string>
 
 SERVICE_STATUS_HANDLE MpmWinService::s_statusHandle = nullptr;
@@ -13,6 +14,66 @@ SERVICE_STATUS MpmWinService::s_status = {};
 HANDLE MpmWinService::s_stopEvent = nullptr;
 
 static const wchar_t *kServiceName = L"MPMService";
+
+// Session and power events arrive on the dispatcher thread while the daemon lives on the Qt thread.
+// The mutex keeps the daemon alive while an event is posted to it.
+static std::mutex s_daemonMutex;
+static MqttDaemon *s_daemon = nullptr;
+static HANDLE s_suspendDone = nullptr;
+
+static void setDaemon(MqttDaemon *daemon)
+{
+    std::lock_guard<std::mutex> lock(s_daemonMutex);
+    s_daemon = daemon;
+}
+
+template <typename F>
+static bool postToDaemon(F &&fn)
+{
+    std::lock_guard<std::mutex> lock(s_daemonMutex);
+    if (!s_daemon) return false;
+    MqttDaemon *daemon = s_daemon;
+    QMetaObject::invokeMethod(daemon, [daemon, fn]() { fn(daemon); }, Qt::QueuedConnection);
+    return true;
+}
+
+// Lock state follows the session on the physical console
+static void forwardSessionChange(DWORD eventType, LPVOID eventData)
+{
+    if (!eventData) return;
+    const DWORD sessionId = static_cast<WTSSESSION_NOTIFICATION *>(eventData)->dwSessionId;
+    const bool onConsole = sessionId == WTSGetActiveConsoleSessionId();
+    switch (eventType) {
+    case WTS_SESSION_LOCK:
+    case WTS_SESSION_LOGOFF:
+        if (onConsole) postToDaemon([](MqttDaemon *d) { d->setPcState(PcState::State::Locked); });
+        break;
+    case WTS_SESSION_UNLOCK:
+    case WTS_SESSION_LOGON:
+        if (onConsole) postToDaemon([](MqttDaemon *d) { d->setPcState(PcState::State::Unlocked); });
+        break;
+    case WTS_CONSOLE_CONNECT:
+    case WTS_CONSOLE_DISCONNECT:
+        // User switching moves another session onto the console
+        postToDaemon([](MqttDaemon *d) { d->setPcState(PcState::consoleSessionState()); });
+        break;
+    }
+}
+
+static void forwardPowerEvent(DWORD eventType)
+{
+    if (eventType == PBT_APMSUSPEND) {
+        // Hold the suspend briefly so sleep reaches the broker before the network goes down
+        ResetEvent(s_suspendDone);
+        const bool posted = postToDaemon([](MqttDaemon *d) {
+            d->notifySuspend();
+            SetEvent(s_suspendDone);
+        });
+        if (posted) WaitForSingleObject(s_suspendDone, 1500);
+    } else if (eventType == PBT_APMRESUMEAUTOMATIC) {
+        postToDaemon([](MqttDaemon *d) { d->notifyResume(); });
+    }
+}
 
 const wchar_t* MpmWinService::serviceName() { return kServiceName; }
 
@@ -186,7 +247,7 @@ int MpmWinService::run(int argc, wchar_t *argv[])
 
 void WINAPI MpmWinService::ServiceMain(DWORD, LPWSTR*)
 {
-    s_statusHandle = RegisterServiceCtrlHandlerW(kServiceName, ServiceCtrlHandler);
+    s_statusHandle = RegisterServiceCtrlHandlerExW(kServiceName, ServiceCtrlHandler, nullptr);
     if (!s_statusHandle) return;
 
     ZeroMemory(&s_status, sizeof(s_status));
@@ -194,6 +255,7 @@ void WINAPI MpmWinService::ServiceMain(DWORD, LPWSTR*)
     setStatus(SERVICE_START_PENDING);
 
     s_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    s_suspendDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!s_stopEvent) {
         setStatus(SERVICE_STOPPED, GetLastError());
         return;
@@ -216,6 +278,7 @@ void WINAPI MpmWinService::ServiceMain(DWORD, LPWSTR*)
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &daemon, [&daemon](){ daemon.notifyGoingOffline(); });
         QObject::connect(&app, &QCoreApplication::aboutToQuit, &daemon, [&daemon](){ daemon.notifyGoingOffline(); });
         daemon.start();
+        setDaemon(&daemon);
         IpcServer ipc(&daemon);
         ipc.start();
         // Quit when stop event is signaled
@@ -228,18 +291,32 @@ void WINAPI MpmWinService::ServiceMain(DWORD, LPWSTR*)
         });
         poll.start();
         statusCode = app.exec();
+        setDaemon(nullptr);
     }
 
     if (s_stopEvent) CloseHandle(s_stopEvent), s_stopEvent = nullptr;
+    if (s_suspendDone) CloseHandle(s_suspendDone), s_suspendDone = nullptr;
     setStatus(SERVICE_STOPPED);
 }
 
-void WINAPI MpmWinService::ServiceCtrlHandler(DWORD controlCode)
+DWORD WINAPI MpmWinService::ServiceCtrlHandler(DWORD controlCode, DWORD eventType, LPVOID eventData, LPVOID)
 {
-    if (controlCode == SERVICE_CONTROL_STOP || controlCode == SERVICE_CONTROL_SHUTDOWN) {
+    switch (controlCode) {
+    case SERVICE_CONTROL_STOP:
+    case SERVICE_CONTROL_SHUTDOWN:
         setStatus(SERVICE_STOP_PENDING);
         if (s_stopEvent) SetEvent(s_stopEvent);
+        return NO_ERROR;
+    case SERVICE_CONTROL_SESSIONCHANGE:
+        forwardSessionChange(eventType, eventData);
+        return NO_ERROR;
+    case SERVICE_CONTROL_POWEREVENT:
+        forwardPowerEvent(eventType);
+        return NO_ERROR;
+    case SERVICE_CONTROL_INTERROGATE:
+        return NO_ERROR;
     }
+    return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
 void MpmWinService::setStatus(DWORD currentState, DWORD win32ExitCode, DWORD waitHintMs)
@@ -247,7 +324,9 @@ void MpmWinService::setStatus(DWORD currentState, DWORD win32ExitCode, DWORD wai
     s_status.dwCurrentState = currentState;
     s_status.dwWin32ExitCode = win32ExitCode;
     s_status.dwWaitHint = waitHintMs;
-    s_status.dwControlsAccepted = (currentState == SERVICE_START_PENDING) ? 0 : SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN;
+    s_status.dwControlsAccepted = (currentState == SERVICE_START_PENDING)
+        ? 0
+        : SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_SESSIONCHANGE | SERVICE_ACCEPT_POWEREVENT;
     if (s_statusHandle) SetServiceStatus(s_statusHandle, &s_status);
 }
 
