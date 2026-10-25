@@ -98,6 +98,7 @@ private:
     void onAddAction();
     void onEditSelectedAction();
     void onDeleteSelectedAction();
+    void onActionsChanged(); // persist, refresh list and notify the service
 
     // Tray
     QSystemTrayIcon *m_trayIcon = nullptr;

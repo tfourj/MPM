@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "actions/actiondialog.h"
+#include "common/service_ipc_client.h"
 #include <QMessageBox>
 #include <QMenu>
 #include <QClipboard>
@@ -14,8 +15,7 @@ void MainWindow::onAddAction()
     const auto res = dlg.getResult();
     UserActionCfg a{ res.customName, res.type, res.expectedMessage, res.exePath };
     m_actions.push_back(a);
-    saveActions();
-    refreshActionsList();
+    onActionsChanged();
 }
 
 void MainWindow::onEditSelectedAction()
@@ -28,8 +28,7 @@ void MainWindow::onEditSelectedAction()
     if (dlg.exec() != QDialog::Accepted) return;
     const auto res = dlg.getResult();
     m_actions[row] = UserActionCfg{ res.customName, res.type, res.expectedMessage, res.exePath };
-    saveActions();
-    refreshActionsList();
+    onActionsChanged();
 }
 
 void MainWindow::onDeleteSelectedAction()
@@ -38,8 +37,18 @@ void MainWindow::onDeleteSelectedAction()
     if (row < 0 || row >= m_actions.size()) return;
     if (QMessageBox::question(this, "Delete Action", "Are you sure?") != QMessageBox::Yes) return;
     m_actions.removeAt(row);
+    onActionsChanged();
+}
+
+void MainWindow::onActionsChanged()
+{
     saveActions();
     refreshActionsList();
+    // The service reads actions from the shared INI, so it needs a reload to pick up changes
+    if (m_isControllingService) {
+        m_settings.sync();
+        ServiceIpcClient::sendPreferred(m_preferredIpc, QByteArrayLiteral("reload-settings"), QStringLiteral("MPMServiceIpc"), 200);
+    }
 }
 
 void MainWindow::loadActions()
