@@ -8,6 +8,7 @@
 #include <QVector>
 #include <QTimer>
 #include "actions/actions.h"
+#include "common/pc_state.h"
 
 // Headless MQTT daemon used by the Windows Service; reuses settings and actions from shared INI.
 class MqttDaemon : public QObject {
@@ -34,6 +35,13 @@ public:
 	// Reloads settings and publishes Home Assistant discovery now; false when not connected
 	bool syncHaDiscovery();
 
+	// PC state reported by the service control handler; published when it changes
+	void setPcState(PcState::State state);
+	// Publishes sleep and flushes it out while the network is still up
+	void notifySuspend();
+	// Rereads the lock state after waking up
+	void notifyResume();
+
 	// Extended status helpers
 	bool isReconnectActive() const { return m_reconnectTimer && m_reconnectTimer->isActive(); }
 	bool isAutoReconnectEnabled() const { return m_autoReconnect; }
@@ -55,6 +63,7 @@ private:
 	void publishAvailabilityOffline();
 	void subscribeHaStatus();
 	bool publishHaDiscovery();
+	void publishPcState();
 
 	struct UserActionCfg {
 		QString customName;
@@ -81,6 +90,7 @@ private:
 	bool m_printOnly = false;
 	bool m_haDiscovery = false; // publish actions to Home Assistant automatically
 	QString m_haDeviceName;     // custom Home Assistant device name, empty for the default
+	PcState::State m_pcState = PcState::State::Unlocked;
 };
 
 

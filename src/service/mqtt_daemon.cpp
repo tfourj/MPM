@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QTimer>
 #include <QSysInfo>
+#include <QAbstractSocket>
 
 MqttDaemon::MqttDaemon(QObject *parent)
 	: QObject(parent)
@@ -22,6 +23,7 @@ MqttDaemon::MqttDaemon(QObject *parent)
 
 void MqttDaemon::start()
 {
+	m_pcState = PcState::consoleSessionState();
 	loadSettings();
 	applyToClient();
 	if (m_autoConnect) {
@@ -164,6 +166,10 @@ void MqttDaemon::onConnected()
 	} else {
 		qWarning() << "Username/customId is empty; no subscription";
 	}
+	// A missed resume would leave sleep behind, so read the lock state again
+	m_pcState = PcState::consoleSessionState();
+	// State goes first so the sensor never shows a stale sleep once health is online
+	publishPcState();
 	if (m_client->state() == QMqttClient::Connected) {
 		m_client->publish(availabilityTopic(), QByteArrayLiteral("online"), 0, true);
 	}
@@ -189,6 +195,32 @@ bool MqttDaemon::publishHaDiscovery()
 	if (ok) qInfo() << "Home Assistant discovery published for" << entries.size() << "actions";
 	else qWarning() << "Home Assistant discovery not published (not connected or username empty)";
 	return ok;
+}
+
+void MqttDaemon::setPcState(PcState::State state)
+{
+	if (state == m_pcState) return;
+	m_pcState = state;
+	qInfo() << "PC state:" << PcState::payload(state);
+	publishPcState();
+}
+
+void MqttDaemon::notifySuspend()
+{
+	setPcState(PcState::State::Sleep);
+	// Windows suspends soon after the handler returns, so write the message now
+	if (auto *socket = qobject_cast<QAbstractSocket *>(m_client->transport())) socket->flush();
+}
+
+void MqttDaemon::notifyResume()
+{
+	setPcState(PcState::consoleSessionState());
+}
+
+void MqttDaemon::publishPcState()
+{
+	if (m_username.isEmpty() || m_client->state() != QMqttClient::Connected) return;
+	m_client->publish(HaDiscovery::stateTopic(m_username), PcState::payload(m_pcState), 1, true);
 }
 
 void MqttDaemon::onHaStatusReceived(const QMqttMessage &message)
@@ -277,7 +309,8 @@ void MqttDaemon::onMessageReceived(const QMqttMessage &message)
 {
 	const QMqttTopicName topic = message.topic();
 	const QString msg = QString::fromUtf8(message.payload());
-	if (topic.name().endsWith("/health")) return;
+	// Own status topics share the action wildcard
+	if (topic.name().endsWith("/health") || topic.name().endsWith("/state")) return;
 	// Retained commands are replayed on every connect and would repeat actions like shutdown on each boot
 	if (message.retain()) {
 		qWarning() << "Ignoring retained message" << msg << "on topic:" << topic.name();
