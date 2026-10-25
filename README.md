@@ -24,8 +24,16 @@ MQTT Power Manager desktop client built with Qt for Windows. It listens to MQTT 
 5. Use the list context menu to copy the topic or a ready to edit publish command
 6. Go to Settings to enable Start with Windows, Auto connect, Start minimized, Lock startup path, or Add to Start Menu
 
+### Installer
+
+- Install [NSIS](https://nsis.sourceforge.io/) and build in Release; this creates `MPM-Setup.exe` (and `MPM.zip` if WinRAR is installed) next to the `Release` output folder
+- The installer works in any folder and preselects an existing installation, which is upgraded in place
+- It closes MPM, stops the service, replaces the files, and installs or updates `MPMService` (uncheck the service component to remove it)
+- Uninstalling keeps your settings in `C:\ProgramData\MPM` unless you choose to delete them
+
 ### Run as a Windows Service (pre-login)
 
+- The installer sets up the service for you; the steps below are for a manual setup
 - Build the project; two executables are produced: `MPM.exe` (GUI) and `MPMService.exe` (service/console)
 - Configure your connection and actions in the GUI first and click Save (stored in `C:\ProgramData\MPM\MqttPowerManager.ini`)
 - Install the service (run from elevated PowerShell or cmd):
