@@ -41,17 +41,22 @@ QString HaDiscovery::statusTopic()
 	return QStringLiteral("homeassistant/status");
 }
 
+QString HaDiscovery::defaultDeviceName(const QString &username)
+{
+	return QStringLiteral("MPM %1").arg(username);
+}
+
 QString HaDiscovery::configTopic(const QString &username, const QString &actionName)
 {
 	return QStringLiteral("homeassistant/button/mpm_%1/%2/config").arg(sanitizedId(username), sanitizedId(actionName));
 }
 
-QByteArray HaDiscovery::configPayload(const QString &username, const Entry &entry)
+QByteArray HaDiscovery::configPayload(const QString &username, const QString &deviceName, const Entry &entry)
 {
 	const QString base = QStringLiteral("mqttpowermanager/%1").arg(username);
 	QJsonObject device{
 		{"identifiers", QJsonArray{QStringLiteral("mpm_%1").arg(sanitizedId(username))}},
-		{"name", QStringLiteral("MPM %1").arg(username)},
+		{"name", deviceName.trimmed().isEmpty() ? defaultDeviceName(username) : deviceName.trimmed()},
 		{"manufacturer", "MPM"},
 		{"model", "MQTT Power Manager"},
 	};
@@ -74,7 +79,8 @@ QByteArray HaDiscovery::configPayload(const QString &username, const Entry &entr
 	return QJsonDocument(config).toJson(QJsonDocument::Compact);
 }
 
-bool HaDiscovery::publish(QMqttClient *client, const QString &username, const QVector<Entry> &entries, QSettings &settings)
+bool HaDiscovery::publish(QMqttClient *client, const QString &username, const QString &deviceName,
+                          const QVector<Entry> &entries, QSettings &settings)
 {
 	if (!client || client->state() != QMqttClient::Connected || username.isEmpty()) return false;
 	settings.sync();
@@ -83,7 +89,7 @@ bool HaDiscovery::publish(QMqttClient *client, const QString &username, const QV
 		const QString topic = configTopic(username, e.name);
 		// Names that differ only by case match the same action, so they share one entity
 		if (topics.contains(topic)) continue;
-		client->publish(topic, configPayload(username, e), 1, true);
+		client->publish(topic, configPayload(username, deviceName, e), 1, true);
 		topics << topic;
 	}
 	// An empty retained config removes the entity in Home Assistant

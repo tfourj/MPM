@@ -19,12 +19,17 @@ namespace HaDiscovery {
 	// Topic Home Assistant publishes "online" to after it starts
 	QString statusTopic();
 
+	// Device name shown in Home Assistant when no custom name is set
+	QString defaultDeviceName(const QString &username);
+
 	QString configTopic(const QString &username, const QString &actionName);
-	QByteArray configPayload(const QString &username, const Entry &entry);
+	// An empty deviceName falls back to defaultDeviceName()
+	QByteArray configPayload(const QString &username, const QString &deviceName, const Entry &entry);
 
 	// Publishes retained configs for entries and removes configs of actions deleted since the last sync.
 	// Published topics are remembered in settings for that cleanup. Returns false when not connected.
-	bool publish(QMqttClient *client, const QString &username, const QVector<Entry> &entries, QSettings &settings);
+	bool publish(QMqttClient *client, const QString &username, const QString &deviceName,
+	             const QVector<Entry> &entries, QSettings &settings);
 
 	// Removes every config published earlier, used when discovery is turned off.
 	bool clear(QMqttClient *client, QSettings &settings);

@@ -184,7 +184,7 @@ bool MqttDaemon::publishHaDiscovery()
 	QVector<HaDiscovery::Entry> entries;
 	for (const UserActionCfg &a : m_actions) entries.push_back({a.customName, a.type, a.expectedMessage});
 	QSettings s(mpmSharedSettingsFilePath(), QSettings::IniFormat);
-	const bool ok = HaDiscovery::publish(m_client, m_username, entries, s);
+	const bool ok = HaDiscovery::publish(m_client, m_username, QString(), entries, s);
 	if (ok) qInfo() << "Home Assistant discovery published for" << entries.size() << "actions";
 	else qWarning() << "Home Assistant discovery not published (not connected or username empty)";
 	return ok;

@@ -85,7 +85,8 @@ bool MainWindow::publishHaDiscovery()
 {
     QVector<HaDiscovery::Entry> entries;
     for (const UserActionCfg &a : m_actions) entries.push_back({a.customName, a.type, a.expectedMessage});
-    const bool ok = HaDiscovery::publish(m_client, ui->lineEditUsername->text().trimmed(), entries, m_settings);
+    const bool ok = HaDiscovery::publish(m_client, ui->lineEditUsername->text().trimmed(), QString(), entries,
+                                        m_settings);
     if (ok) log(QString("Home Assistant discovery published for %1 actions").arg(entries.size()));
     return ok;
 }
