@@ -30,6 +30,7 @@
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QSessionManager>
+#include <QSysInfo>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -75,7 +76,8 @@ MainWindow::MainWindow(QWidget *parent)
     // Default values if not configured yet
     m_client->setHostname("127.0.0.1");
     m_client->setPort(1883);
-    m_client->setClientId("QtMqttClientPC");
+    // Unique per machine and Windows user so clients sharing one broker do not kick each other off
+    m_client->setClientId(QString("MPM-%1-%2").arg(QSysInfo::machineHostName(), qEnvironmentVariable("USERNAME")));
 
     connect(m_client, &QMqttClient::connected, this, &MainWindow::onConnected);
     connect(m_client, &QMqttClient::stateChanged, this, &MainWindow::onStateChanged);

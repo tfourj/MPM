@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QTimer>
+#include <QSysInfo>
 
 MqttDaemon::MqttDaemon(QObject *parent)
 	: QObject(parent)
@@ -99,7 +100,8 @@ void MqttDaemon::applyToClient()
 {
 	m_client->setHostname(m_host);
 	m_client->setPort(m_port);
-	m_client->setClientId("MPMService");
+	// Unique per machine so several PCs can share one broker without kicking each other off
+	m_client->setClientId(QStringLiteral("MPMService-%1").arg(QSysInfo::machineHostName()));
 	m_client->setUsername(m_mqttUser);
 	m_client->setPassword(m_mqttPassword);
 	// LWT
