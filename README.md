@@ -49,6 +49,7 @@ Notes:
 ### Actions and topics
 
 - Actions are named and matched by MQTT message content
+- Retained messages are ignored, so publish commands without the retain flag
 - Expected topic is `mqttpowermanager/<username>/<action_name>`
 - Example publish command (using mosquitto tools):
 

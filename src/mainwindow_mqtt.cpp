@@ -64,6 +64,9 @@ void MainWindow::onConnected()
         if (!subscription) {
             log("Failed to subscribe to " + topic);
         } else {
+            // Per-subscription signal exposes the retain flag; UniqueConnection avoids duplicates on resubscribe
+            connect(subscription, &QMqttSubscription::messageReceived, this, &MainWindow::onMessageReceived,
+                    Qt::UniqueConnection);
             log("Subscribed to topic: " + topic);
         }
     } else {
@@ -142,10 +145,16 @@ QString MainWindow::getSubscribeTopic() const
     return QString("mqttpowermanager/%1/+" ).arg(username);
 }
 
-void MainWindow::onMessageReceived(const QByteArray &message, const QMqttTopicName &topic)
+void MainWindow::onMessageReceived(const QMqttMessage &message)
 {
-    QString msg = QString::fromUtf8(message);
+    const QMqttTopicName topic = message.topic();
+    QString msg = QString::fromUtf8(message.payload());
     if (topic.name().endsWith("/health")) {
+        return;
+    }
+    // Retained commands are replayed on every connect and would repeat actions like shutdown on each boot
+    if (message.retain()) {
+        log("Ignoring retained message: " + msg + " on topic: " + topic.name());
         return;
     }
     log("Received message: " + msg + " on topic: " + topic.name());

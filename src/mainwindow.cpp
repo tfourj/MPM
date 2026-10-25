@@ -78,7 +78,6 @@ MainWindow::MainWindow(QWidget *parent)
     m_client->setClientId("QtMqttClientPC");
 
     connect(m_client, &QMqttClient::connected, this, &MainWindow::onConnected);
-    connect(m_client, &QMqttClient::messageReceived, this, &MainWindow::onMessageReceived);
     connect(m_client, &QMqttClient::stateChanged, this, &MainWindow::onStateChanged);
     connect(m_client, &QMqttClient::errorChanged, this, &MainWindow::onErrorChanged);
 

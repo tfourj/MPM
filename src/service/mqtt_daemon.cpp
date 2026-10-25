@@ -12,7 +12,6 @@ MqttDaemon::MqttDaemon(QObject *parent)
 {
 	m_client = new QMqttClient(this);
 	connect(m_client, &QMqttClient::connected, this, &MqttDaemon::onConnected);
-	connect(m_client, &QMqttClient::messageReceived, this, &MqttDaemon::onMessageReceived);
 	connect(m_client, &QMqttClient::stateChanged, this, &MqttDaemon::onStateChanged);
 	connect(m_client, &QMqttClient::errorChanged, this, &MqttDaemon::onErrorChanged);
 	m_reconnectTimer = new QTimer(this);
@@ -130,7 +129,9 @@ void MqttDaemon::onConnected()
 	const QString topic = subscribeTopic();
 	if (!topic.isEmpty()) {
 		qInfo() << "Subscribed to" << topic;
-		m_client->subscribe(topic, 0);
+		// Per-subscription signal exposes the retain flag; UniqueConnection avoids duplicates on resubscribe
+		QMqttSubscription *sub = m_client->subscribe(topic, 0);
+		if (sub) connect(sub, &QMqttSubscription::messageReceived, this, &MqttDaemon::onMessageReceived, Qt::UniqueConnection);
 	} else {
 		qWarning() << "Username/customId is empty; no subscription";
 	}
@@ -205,10 +206,16 @@ void MqttDaemon::loadActions(QSettings *source)
 	S.endArray();
 }
 
-void MqttDaemon::onMessageReceived(const QByteArray &message, const QMqttTopicName &topic)
+void MqttDaemon::onMessageReceived(const QMqttMessage &message)
 {
-	const QString msg = QString::fromUtf8(message);
+	const QMqttTopicName topic = message.topic();
+	const QString msg = QString::fromUtf8(message.payload());
 	if (topic.name().endsWith("/health")) return;
+	// Retained commands are replayed on every connect and would repeat actions like shutdown on each boot
+	if (message.retain()) {
+		qWarning() << "Ignoring retained message" << msg << "on topic:" << topic.name();
+		return;
+	}
 	qInfo() << "Received message:" << msg << "on topic:" << topic.name();
 	const QStringList parts = topic.name().split('/');
 	const QString actionName = parts.size() >= 3 ? parts.last() : QString();

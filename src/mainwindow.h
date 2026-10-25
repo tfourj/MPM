@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QMqttClient>
+#include <QMqttMessage>
 #include <QTimer>
 #include <QSettings>
 #include <QSystemTrayIcon>
@@ -27,7 +28,7 @@ public:
 private slots:
     void onConnectClicked();
     void onConnected();
-    void onMessageReceived(const QByteArray &message, const QMqttTopicName &topic);
+    void onMessageReceived(const QMqttMessage &message);
     void onStateChanged(QMqttClient::ClientState state);
     void onErrorChanged(QMqttClient::ClientError error);
     void onConnectTimeout();
