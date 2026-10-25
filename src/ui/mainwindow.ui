@@ -231,44 +231,6 @@
          </layout>
         </item>
         <item>
-         <layout class="QHBoxLayout" name="horizontalLayoutHomeAssistant">
-          <item>
-           <widget class="QCheckBox" name="checkBoxHaDiscovery">
-            <property name="toolTip">
-             <string>Publish actions as Home Assistant buttons on connect and whenever they change</string>
-            </property>
-            <property name="text">
-             <string>Home Assistant discovery</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLabel" name="labelHaDeviceName">
-            <property name="text">
-             <string>Device name:</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLineEdit" name="lineEditHaDeviceName">
-            <property name="toolTip">
-             <string>Name of the MPM device in Home Assistant, leave empty for the default</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QPushButton" name="pushButtonHaSync">
-            <property name="toolTip">
-             <string>Publish all actions to Home Assistant now</string>
-            </property>
-            <property name="text">
-             <string>Sync to Home Assistant</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </item>
-        <item>
          <widget class="QLabel" name="labelActionsInfo">
           <property name="text">
            <string>Expected MQTT message: </string>
@@ -366,6 +328,44 @@
            </property>
           </widget>
          </item>
+        <item>
+         <widget class="QCheckBox" name="checkBoxHaDiscovery">
+          <property name="toolTip">
+           <string>Publish actions as Home Assistant buttons on connect and whenever they change</string>
+          </property>
+          <property name="text">
+           <string>Home Assistant discovery</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayoutHomeAssistant">
+          <item>
+           <widget class="QLabel" name="labelHaDeviceName">
+            <property name="text">
+             <string>Device name:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="lineEditHaDeviceName">
+            <property name="toolTip">
+             <string>Name of the MPM device in Home Assistant, leave empty for the default</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButtonHaSync">
+            <property name="toolTip">
+             <string>Publish all actions to Home Assistant now</string>
+            </property>
+            <property name="text">
+             <string>Sync to Home Assistant</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
         <item>
          <spacer name="verticalSpacer">
           <property name="orientation">
