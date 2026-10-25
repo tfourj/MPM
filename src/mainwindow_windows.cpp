@@ -10,9 +10,37 @@
 #include "common/service_ipc_client.h"
 #include <windows.h>
 #include <winsvc.h>
+#include <wtsapi32.h>
 #include <shobjidl.h>
 #include <shlguid.h>
 #include <objbase.h>
+
+void MainWindow::registerPcStateEvents()
+{
+    m_pcState = PcState::ownSessionState();
+    // winId creates the native window, which also gets WM_POWERBROADCAST while hidden in the tray
+    WTSRegisterSessionNotification(reinterpret_cast<HWND>(winId()), NOTIFY_FOR_THIS_SESSION);
+}
+
+void MainWindow::unregisterPcStateEvents()
+{
+    WTSUnRegisterSessionNotification(reinterpret_cast<HWND>(winId()));
+}
+
+bool MainWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *result)
+{
+    const MSG *msg = static_cast<const MSG *>(message);
+    if (eventType == "windows_generic_MSG" && msg) {
+        if (msg->message == WM_WTSSESSION_CHANGE) {
+            if (msg->wParam == WTS_SESSION_LOCK) setPcState(PcState::State::Locked);
+            else if (msg->wParam == WTS_SESSION_UNLOCK) setPcState(PcState::State::Unlocked);
+        } else if (msg->message == WM_POWERBROADCAST) {
+            if (msg->wParam == PBT_APMSUSPEND) setPcState(PcState::State::Sleep);
+            else if (msg->wParam == PBT_APMRESUMEAUTOMATIC) setPcState(PcState::ownSessionState());
+        }
+    }
+    return QMainWindow::nativeEvent(eventType, message, result);
+}
 
 void MainWindow::onStartWithWindowsToggled(bool enabled)
 {

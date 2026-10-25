@@ -12,6 +12,7 @@
 #include <QVector>
 #include <QCloseEvent>
 #include "actions/actions.h"
+#include "common/pc_state.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -81,6 +82,13 @@ private:
     void onHaSyncClicked();
     void onHaDeviceNameEdited();
 
+    // PC state sensor, fed by session and power messages to this window
+    PcState::State m_pcState = PcState::State::Unlocked;
+    void setPcState(PcState::State state);
+    void publishPcState();
+    void registerPcStateEvents();
+    void unregisterPcStateEvents();
+
     void loadSettings();
     void saveSettingsIfNeeded();
     void applyUiToClient();
@@ -124,6 +132,7 @@ private:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool nativeEvent(const QByteArray &eventType, void *message, qintptr *result) override;
     void attemptQuitWithServicePrompt();
     bool isServiceInstalled() const;
     bool isServiceRunning() const;

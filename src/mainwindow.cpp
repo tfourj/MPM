@@ -83,6 +83,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_client, &QMqttClient::connected, this, &MainWindow::onConnected);
     connect(m_client, &QMqttClient::stateChanged, this, &MainWindow::onStateChanged);
     connect(m_client, &QMqttClient::errorChanged, this, &MainWindow::onErrorChanged);
+    registerPcStateEvents();
 
     // Connect timeout timer
     m_connectTimeoutTimer.setSingleShot(true);
@@ -298,6 +299,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
+    unregisterPcStateEvents();
     delete ui;
 }
 

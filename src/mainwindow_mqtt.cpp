@@ -7,6 +7,7 @@
 #include "common/crypto_win.h"
 #include "common/ha_discovery.h"
 #include <QSettings>
+#include <QAbstractSocket>
 
 void MainWindow::onConnectClicked()
 {
@@ -74,6 +75,9 @@ void MainWindow::onConnected()
         log("Username/custom ID is empty!");
     }
 
+    // A missed resume would leave sleep behind; state goes before health so it is never stale
+    m_pcState = PcState::ownSessionState();
+    publishPcState();
     publishAvailabilityOnline();
     if (ui->checkBoxHaDiscovery->isChecked()) {
         subscribeHaStatus();
@@ -89,6 +93,23 @@ bool MainWindow::publishHaDiscovery()
                                         ui->lineEditHaDeviceName->text().trimmed(), entries, m_settings);
     if (ok) log(QString("Home Assistant discovery published for %1 actions").arg(entries.size()));
     return ok;
+}
+
+void MainWindow::setPcState(PcState::State state)
+{
+    if (state == m_pcState) return;
+    m_pcState = state;
+    log("PC state: " + QString::fromUtf8(PcState::payload(state)));
+    publishPcState();
+}
+
+void MainWindow::publishPcState()
+{
+    const QString username = ui->lineEditUsername->text().trimmed();
+    if (username.isEmpty() || m_client->state() != QMqttClient::Connected) return;
+    m_client->publish(HaDiscovery::stateTopic(username), PcState::payload(m_pcState), 1, true);
+    // Windows suspends right after WM_POWERBROADCAST returns, so write the message now
+    if (auto *socket = qobject_cast<QAbstractSocket *>(m_client->transport())) socket->flush();
 }
 
 void MainWindow::subscribeHaStatus()
@@ -225,7 +246,8 @@ void MainWindow::onMessageReceived(const QMqttMessage &message)
 {
     const QMqttTopicName topic = message.topic();
     QString msg = QString::fromUtf8(message.payload());
-    if (topic.name().endsWith("/health")) {
+    // Own status topics share the action wildcard
+    if (topic.name().endsWith("/health") || topic.name().endsWith("/state")) {
         return;
     }
     // Retained commands are replayed on every connect and would repeat actions like shutdown on each boot
