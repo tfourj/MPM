@@ -59,6 +59,8 @@ Notes:
 - Actions are named and matched by MQTT message content
 - Retained messages are ignored, so publish commands without the retain flag
 - Expected topic is `mqttpowermanager/<username>/<action_name>`
+- The PC state (`unlocked`, `locked`, or `sleep`) is published with retained messages on `mqttpowermanager/<username>/state`
+- `health` and `state` are used by MPM itself, so do not use them as action names
 - Example publish command (using mosquitto tools):
 
 ```bash
@@ -71,6 +73,7 @@ mosquitto_pub -h 127.0.0.1 -p 1883 -t "mqttpowermanager/alice/PC_Lock" -m "PRESS
 - Buttons are published on connect, when Home Assistant restarts, and whenever actions are added, edited, or deleted; deleted actions are removed from Home Assistant
 - Click **Sync to Home Assistant** to publish now; turning discovery off removes the buttons
 - Set **Device name** to rename the device in Home Assistant (default `MPM <username>`)
+- A **State** sensor shows whether the PC is unlocked, locked, or asleep; it keeps showing Sleep while the PC sleeps
 - The device shows as unavailable while MPM is offline
 
 ### License
