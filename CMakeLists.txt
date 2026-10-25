@@ -152,8 +152,6 @@ if(WIN32 AND NOT STATIC_BUILD)
                 --no-system-d3d-compiler
                 --no-opengl-sw
                 --no-quick-import
-                --no-virtualkeyboard
-                --no-3dcore
                 "$<TARGET_FILE:MPM>"
             COMMENT "Deploying only core Qt DLLs with windeployqt..."
         )
