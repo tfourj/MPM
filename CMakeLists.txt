@@ -35,6 +35,8 @@ set(PROJECT_SOURCES
         src/common/service_ipc_client.h
         src/common/ipc_auth.cpp
         src/common/ipc_auth.h
+        src/common/ha_discovery.cpp
+        src/common/ha_discovery.h
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
@@ -122,12 +124,15 @@ if (WIN32)
         src/common/crypto_win.h
         src/common/ipc_auth.cpp
         src/common/ipc_auth.h
+        src/common/ha_discovery.cpp
+        src/common/ha_discovery.h
         src/actions/actions.cpp
         src/actions/actions.h
     )
     # Build as console subsystem so main() is used
     target_link_options(MPMService PRIVATE -Wl,-subsystem,console)
     target_include_directories(MPMService PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(MPMService PRIVATE APP_VERSION="${PROJECT_VERSION}")
     target_link_libraries(MPMService PRIVATE Qt${QT_VERSION_MAJOR}::Mqtt Qt${QT_VERSION_MAJOR}::Core Qt${QT_VERSION_MAJOR}::Network Crypt32 Ole32 Shell32 PowrProf Wtsapi32 Userenv Advapi32)
     set_target_properties(MPMService PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/build/$<CONFIG>"
