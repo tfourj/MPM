@@ -90,6 +90,43 @@ QByteArray HaDiscovery::configPayload(const QString &username, const QString &de
 	return QJsonDocument(config).toJson(QJsonDocument::Compact);
 }
 
+QString HaDiscovery::stateTopic(const QString &username)
+{
+	return QStringLiteral("mqttpowermanager/%1/state").arg(username);
+}
+
+QString HaDiscovery::stateConfigTopic(const QString &username)
+{
+	return QStringLiteral("homeassistant/sensor/mpm_%1/state/config").arg(sanitizedId(username));
+}
+
+QByteArray HaDiscovery::stateConfigPayload(const QString &username, const QString &deviceName)
+{
+	const QString base = QStringLiteral("mqttpowermanager/%1").arg(username);
+	// The broker's last will marks health offline while the PC sleeps, so a sleep state keeps the sensor
+	// available on its own; after a shutdown or crash both report unavailable
+	const QJsonArray availability{
+		QJsonObject{{"topic", base + "/health"}},
+		QJsonObject{
+			{"topic", stateTopic(username)},
+			{"value_template", "{{ 'online' if value == 'sleep' else 'offline' }}"},
+		},
+	};
+	QJsonObject config{
+		{"name", "State"},
+		{"unique_id", QStringLiteral("mpm_%1_sensor_state").arg(sanitizedId(username))},
+		{"state_topic", stateTopic(username)},
+		{"device_class", "enum"},
+		{"options", QJsonArray{"unlocked", "locked", "sleep"}},
+		{"availability", availability},
+		{"availability_mode", "any"},
+		{"icon", "mdi:monitor"},
+		{"device", deviceObject(username, deviceName)},
+		{"origin", originObject()},
+	};
+	return QJsonDocument(config).toJson(QJsonDocument::Compact);
+}
+
 bool HaDiscovery::publish(QMqttClient *client, const QString &username, const QString &deviceName,
                           const QVector<Entry> &entries, QSettings &settings)
 {
@@ -103,6 +140,9 @@ bool HaDiscovery::publish(QMqttClient *client, const QString &username, const QS
 		client->publish(topic, configPayload(username, deviceName, e), 1, true);
 		topics << topic;
 	}
+	const QString stateConfig = stateConfigTopic(username);
+	client->publish(stateConfig, stateConfigPayload(username, deviceName), 1, true);
+	topics << stateConfig;
 	// An empty retained config removes the entity in Home Assistant
 	const QStringList previous = settings.value(kPublishedKey).toStringList();
 	for (const QString &old : previous) {

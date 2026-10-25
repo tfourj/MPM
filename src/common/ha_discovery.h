@@ -8,7 +8,8 @@
 class QMqttClient;
 class QSettings;
 
-// Home Assistant MQTT discovery: each action is announced as a button on one MPM device.
+// Home Assistant MQTT discovery: each action is announced as a button on one MPM device,
+// next to a sensor showing whether the PC is unlocked, locked or asleep.
 namespace HaDiscovery {
 	struct Entry {
 		QString name;     // action name, also the MQTT topic suffix
@@ -26,8 +27,14 @@ namespace HaDiscovery {
 	// An empty deviceName falls back to defaultDeviceName()
 	QByteArray configPayload(const QString &username, const QString &deviceName, const Entry &entry);
 
-	// Publishes retained configs for entries and removes configs of actions deleted since the last sync.
-	// Published topics are remembered in settings for that cleanup. Returns false when not connected.
+	// Retained topic holding the PC state payload from PcState
+	QString stateTopic(const QString &username);
+	QString stateConfigTopic(const QString &username);
+	QByteArray stateConfigPayload(const QString &username, const QString &deviceName);
+
+	// Publishes retained configs for entries and the state sensor, and removes configs of actions deleted
+	// since the last sync. Published topics are remembered in settings for that cleanup.
+	// Returns false when not connected.
 	bool publish(QMqttClient *client, const QString &username, const QString &deviceName,
 	             const QVector<Entry> &entries, QSettings &settings);
 
