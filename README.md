@@ -52,7 +52,7 @@ MPMService.exe --uninstall
 
 Notes:
 - Passwords are protected using DPAPI with machine scope so the service can read them
-- Broker availability (online/offline) is published with retained messages on `<username>/health`
+- Broker availability (online/offline) is published with retained messages on `mqttpowermanager/<username>/health`
 
 ### Actions and topics
 
@@ -64,6 +64,13 @@ Notes:
 ```bash
 mosquitto_pub -h 127.0.0.1 -p 1883 -t "mqttpowermanager/alice/PC_Lock" -m "PRESS"
 ```
+
+### Home Assistant
+
+- Enable **Home Assistant discovery** on the Actions tab to show every action as a button on an `MPM <username>` device (needs the MQTT integration)
+- Buttons are published on connect, when Home Assistant restarts, and whenever actions are added, edited, or deleted; deleted actions are removed from Home Assistant
+- Click **Sync to Home Assistant** to publish now; turning discovery off removes the buttons
+- The device shows as unavailable while MPM is offline
 
 ### License
 
