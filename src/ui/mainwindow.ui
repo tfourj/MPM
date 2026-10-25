@@ -231,6 +231,43 @@
          </layout>
         </item>
         <item>
+         <layout class="QHBoxLayout" name="horizontalLayoutHomeAssistant">
+          <item>
+           <widget class="QCheckBox" name="checkBoxHaDiscovery">
+            <property name="toolTip">
+             <string>Publish actions as Home Assistant buttons on connect and whenever they change</string>
+            </property>
+            <property name="text">
+             <string>Home Assistant discovery</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacerHomeAssistant">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButtonHaSync">
+            <property name="toolTip">
+             <string>Publish all actions to Home Assistant now</string>
+            </property>
+            <property name="text">
+             <string>Sync to Home Assistant</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
          <widget class="QLabel" name="labelActionsInfo">
           <property name="text">
            <string>Expected MQTT message: </string>
