@@ -42,11 +42,11 @@ struct WtsInfoEx {
 QByteArray PcState::payload(State state)
 {
 	switch (state) {
-	case State::Unlocked: return QByteArrayLiteral("unlocked");
-	case State::Locked:   return QByteArrayLiteral("locked");
-	case State::Sleep:    return QByteArrayLiteral("sleep");
+	case State::Unlocked: return QByteArrayLiteral("Unlocked");
+	case State::Locked:   return QByteArrayLiteral("Locked");
+	case State::Sleep:    return QByteArrayLiteral("Sleep");
 	}
-	return QByteArrayLiteral("unlocked");
+	return QByteArrayLiteral("Unlocked");
 }
 
 PcState::State PcState::sessionState(unsigned long sessionId)

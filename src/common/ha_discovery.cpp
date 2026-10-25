@@ -109,7 +109,7 @@ QByteArray HaDiscovery::stateConfigPayload(const QString &username, const QStrin
 		QJsonObject{{"topic", base + "/health"}},
 		QJsonObject{
 			{"topic", stateTopic(username)},
-			{"value_template", "{{ 'online' if value == 'sleep' else 'offline' }}"},
+			{"value_template", "{{ 'online' if value == 'Sleep' else 'offline' }}"},
 		},
 	};
 	QJsonObject config{
@@ -117,7 +117,7 @@ QByteArray HaDiscovery::stateConfigPayload(const QString &username, const QStrin
 		{"unique_id", QStringLiteral("mpm_%1_sensor_state").arg(sanitizedId(username))},
 		{"state_topic", stateTopic(username)},
 		{"device_class", "enum"},
-		{"options", QJsonArray{"unlocked", "locked", "sleep"}},
+		{"options", QJsonArray{"Unlocked", "Locked", "Sleep"}},
 		{"availability", availability},
 		{"availability_mode", "any"},
 		{"icon", "mdi:monitor"},

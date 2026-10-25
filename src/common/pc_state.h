@@ -6,7 +6,7 @@
 namespace PcState {
 	enum class State { Unlocked, Locked, Sleep };
 
-	// Payload for the state topic: unlocked, locked or sleep
+	// Payload for the state topic: Unlocked, Locked or Sleep
 	QByteArray payload(State state);
 
 	// Lock state of a Windows session; Locked when nobody is logged on to it
