@@ -72,6 +72,7 @@ private:
 	int m_reconnectSec = 5;
 	QTimer *m_reconnectTimer = nullptr;
 	bool m_userInitiatedDisconnect = false;
+	bool m_applyAndReconnect = false; // reload changed params while connected
 	bool m_printOnly = false;
 };
 

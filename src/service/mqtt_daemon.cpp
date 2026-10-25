@@ -44,6 +44,7 @@ void MqttDaemon::reloadSettings()
 {
 	qInfo() << "Reloading settings";
 	m_settings.sync();
+	const QString oldUsername = m_username;
 	const QString oldHost = m_host;
 	const quint16 oldPort = m_port;
 	const QString oldUser = m_mqttUser;
@@ -52,15 +53,19 @@ void MqttDaemon::reloadSettings()
 	// Fresh QSettings to force reread
 	QSettings fresh(mpmSharedSettingsFilePath(), QSettings::IniFormat);
 	loadSettings(&fresh);
-	applyToClient();
 	m_reconnectTimer->setInterval(qMax(1000, m_reconnectSec * 1000));
-	// If connection parameters changed and we're connected, reconnect to apply
-	if (m_client->state() == QMqttClient::Connected && (m_host != oldHost || m_port != oldPort || m_mqttUser != oldUser || m_mqttPassword != oldPass)) {
+	const bool paramsChanged = m_username != oldUsername || m_host != oldHost || m_port != oldPort
+		|| m_mqttUser != oldUser || m_mqttPassword != oldPass;
+	// QMqttClient ignores connection setters while connected, so disconnect first;
+	// onStateChanged applies the new settings and reconnects once disconnected
+	if (m_client->state() == QMqttClient::Connected && paramsChanged) {
 		qInfo() << "Connection params changed; reconnecting";
 		m_userInitiatedDisconnect = false;
+		m_applyAndReconnect = true;
 		m_client->disconnectFromHost();
-		// Let onStateChanged schedule reconnect
+		return;
 	}
+	applyToClient();
 	// If autoConnect is enabled and we're disconnected, connect now
 	// Do not auto-connect if user explicitly requested disconnect
 	if (m_autoConnect && m_client->state() == QMqttClient::Disconnected && !m_userInitiatedDisconnect) {
@@ -149,6 +154,15 @@ void MqttDaemon::onStateChanged(QMqttClient::ClientState state)
 	case QMqttClient::Disconnected: qInfo() << "MQTT state: Disconnected"; break;
 	case QMqttClient::Connecting: qInfo() << "MQTT state: Connecting"; break;
 	case QMqttClient::Connected: qInfo() << "MQTT state: Connected"; break;
+	}
+	// Finish a settings reload that needed a disconnect first
+	if (state == QMqttClient::Disconnected && m_applyAndReconnect) {
+		m_applyAndReconnect = false;
+		applyToClient();
+		// Defer so the client fully finishes disconnecting before reconnecting
+		QTimer::singleShot(0, this, [this]() {
+			if (!m_userInitiatedDisconnect && m_client->state() == QMqttClient::Disconnected) m_client->connectToHost();
+		});
 	}
 	// Manage reconnect timer based on state and flags
 	if (!m_autoReconnect || m_userInitiatedDisconnect) {
