@@ -34,6 +34,26 @@ QString iconFor(ActionType type)
 	return QStringLiteral("mdi:gesture-tap-button");
 }
 
+// Shared by every entity so they all land on one device
+QJsonObject deviceObject(const QString &username, const QString &deviceName)
+{
+	QJsonObject device{
+		{"identifiers", QJsonArray{QStringLiteral("mpm_%1").arg(sanitizedId(username))}},
+		{"name", deviceName.trimmed().isEmpty() ? HaDiscovery::defaultDeviceName(username) : deviceName.trimmed()},
+		{"manufacturer", "MPM"},
+		{"model", "MQTT Power Manager"},
+	};
+#ifdef APP_VERSION
+	device.insert("sw_version", QString::fromUtf8(APP_VERSION));
+#endif
+	return device;
+}
+
+QJsonObject originObject()
+{
+	return QJsonObject{{"name", "MPM"}, {"support_url", "https://github.com/tfourj/MPM"}};
+}
+
 } // namespace
 
 QString HaDiscovery::statusTopic()
@@ -54,15 +74,6 @@ QString HaDiscovery::configTopic(const QString &username, const QString &actionN
 QByteArray HaDiscovery::configPayload(const QString &username, const QString &deviceName, const Entry &entry)
 {
 	const QString base = QStringLiteral("mqttpowermanager/%1").arg(username);
-	QJsonObject device{
-		{"identifiers", QJsonArray{QStringLiteral("mpm_%1").arg(sanitizedId(username))}},
-		{"name", deviceName.trimmed().isEmpty() ? defaultDeviceName(username) : deviceName.trimmed()},
-		{"manufacturer", "MPM"},
-		{"model", "MQTT Power Manager"},
-	};
-#ifdef APP_VERSION
-	device.insert("sw_version", QString::fromUtf8(APP_VERSION));
-#endif
 	QJsonObject config{
 		{"name", entry.name},
 		{"unique_id", QStringLiteral("mpm_%1_%2").arg(sanitizedId(username), sanitizedId(entry.name))},
@@ -72,8 +83,8 @@ QByteArray HaDiscovery::configPayload(const QString &username, const QString &de
 		{"payload_available", "online"},
 		{"payload_not_available", "offline"},
 		{"icon", iconFor(entry.type)},
-		{"device", device},
-		{"origin", QJsonObject{{"name", "MPM"}, {"support_url", "https://github.com/tfourj/MPM"}}},
+		{"device", deviceObject(username, deviceName)},
+		{"origin", originObject()},
 	};
 	if (entry.type == ActionType::Restart) config.insert("device_class", "restart");
 	return QJsonDocument(config).toJson(QJsonDocument::Compact);
